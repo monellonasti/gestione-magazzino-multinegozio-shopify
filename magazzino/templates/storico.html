@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}
+{% block titolo %}Storico{% endblock %}
+{% block corpo %}
+<header class="testata"><div><h1>Storico</h1></div></header>
+
+<section class="scheda" id="operazioni">
+  <h2>Aggiornamenti su Shopify</h2>
+  <nav class="schede-filtro" aria-label="Filtra"><a href="/storico?op=bloccate#operazioni" class="{{ 'attivo' if filtro_op == 'bloccate' }}">Da controllare o in corso</a>
+    <a href="/storico?op=tutte#operazioni" class="{{ 'attivo' if filtro_op == 'tutte' }}">Tutti (ultimi 200)</a></nav>
+  {% if ops %}
+  <div class="tabella-scorre"><table class="semplice">
+    <thead><tr><th>Quando</th><th>Documento</th><th>Movimento</th><th>Negozio Shopify</th><th class="num">Pezzi</th><th>Esito</th><th>Decisione</th></tr></thead>
+    <tbody>{% for o in ops %}
+      <tr><td class="data">{{ locale(o.aggiornata_il, '%d/%m %H:%M') }}</td>
+        <td>{% if o.trasferimento_id %}<a href="/trasferimenti/{{ o.trasferimento_id }}#operazioni">{{ o.codice }}</a>{% else %}rettifica {{ o.rettifica_id }}{% endif %}</td>
+        <td>{{ OP_TIPI.get(o.tipo, o.tipo) }}</td><td>{{ nomi_store[o.store] }}</td><td class="num">{{ '%+d'|format(o.delta) }}</td>
+        <td><span class="op op-{{ o.stato }}">{{ OP_STATI.get(o.stato, o.stato) }}</span>
+          {% if o.errore and o.stato != 'fatta' %}<small class="blocco">{{ o.errore }}</small>{% endif %}
+          {% if o.stato == 'fatta' and o.dopo is not none %}<small class="blocco">disponibili dopo: {{ o.dopo }}</small>{% endif %}
+          <details class="tecnico"><summary>dettagli</summary><small>chiave <code>{{ o.chiave_shopify or o.chiave }}</code> · {{ plurale(o.tentativi, 'tentativo', 'tentativi') }}</small></details></td>
+        <td>{% if o.stato in OP_PROBLEMI %}
+          <form method="post" action="/operazioni/{{ o.id }}/{{ 'riprova' if o.stato in ('conflitto', 'errore') else 'applicata' }}" class="decisione">
+            {{ m.gettone_campo() }}<input type="hidden" name="torna" value="/storico#operazioni">
+            <input name="nota" placeholder="Nota (obbligatoria)" required aria-label="Nota">
+            {% if o.stato in ('conflitto', 'errore') %}<button class="secondario piccolo">Riprova</button>
+              <button class="secondario piccolo" formaction="/operazioni/{{ o.id }}/annulla">Non serve più</button>
+            {% else %}<button class="secondario piccolo">C'è su Shopify</button>
+              <button class="secondario piccolo" formaction="/operazioni/{{ o.id }}/non_applicata">Non c'è: rifalla</button>{% endif %}
+          </form>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="vuoto">{{ 'Niente da controllare: tutti gli aggiornamenti sono andati a buon fine.' if filtro_op == 'bloccate' else 'Ancora nessun aggiornamento.' }}</p>{% endif %}
+</section>
+
+<section class="scheda" id="registro">
+  <h2>Chi ha fatto cosa</h2>
+  <div class="tabella-scorre"><table class="semplice">
+    <thead><tr><th>Quando</th><th>Chi</th><th>Azione</th><th>Oggetto</th><th>Prima</th><th>Dopo</th></tr></thead>
+    <tbody>{% for r in registro %}
+      <tr><td class="data">{{ locale(r.il, '%d/%m %H:%M') }}</td><td>{{ r.utente or '' }}</td><td>{{ r.azione }}</td><td>{{ r.oggetto or '' }}</td>
+        <td><code class="piccolo">{{ r.prima or '' }}</code></td><td><code class="piccolo">{{ r.dopo or '' }}</code></td></tr>
+    {% else %}<tr><td colspan="6">Nessuna azione registrata.</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {{ m.pagine(pagina, pagine, '/storico?op=' ~ filtro_op) }}
+</section>
+<p class="nota">Le letture dei negozi sono in <a href="/impostazioni#collegamento">Impostazioni › Collegamento</a>.</p>
+{% endblock %}

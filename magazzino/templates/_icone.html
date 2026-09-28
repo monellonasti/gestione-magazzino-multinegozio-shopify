@@ -1,0 +1,31 @@
+{#- Icone del Magazzino: 20 icone originali disegnate per questo progetto (nessun set di terzi: niente attribuzioni; se serve una licenza esplicita, MIT),
+    griglia 24x24, tratto 1.75, estremità arrotondate, colore = currentColor.
+    Uso:  {% import "_icone.html" as ic %}  ...  {{ ic.icona("inventario") }}
+          {{ ic.icona("stampa", "icona-s") }}                  decorativa (aria-hidden)
+          {{ ic.icona("aggiorna", titolo="Aggiorna ora") }}   con nome accessibile, solo se l'icona è da sola
+    Nomi: panoramica, inventario, reintegro, bilanciamento, trasferimenti, shopify, anomalie, storico, impostazioni, scan, cerca, check, alert, info, freccia-destra, stampa, scarica, aggiorna, utente, esci -#}
+{% macro icona(nome, classe="", titolo=none) -%}
+<svg class="icona{{ ' ' ~ classe if classe }}" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" focusable="false" {% if titolo %}role="img" aria-label="{{ titolo }}"{% else %}aria-hidden="true"{% endif %}>
+{%- if nome == "panoramica" %}<path d="M5 3.5h4a1.5 1.5 0 0 1 1.5 1.5v5.5a1.5 1.5 0 0 1 -1.5 1.5h-4a1.5 1.5 0 0 1 -1.5 -1.5v-5.5a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M15 3.5h4a1.5 1.5 0 0 1 1.5 1.5v2a1.5 1.5 0 0 1 -1.5 1.5h-4a1.5 1.5 0 0 1 -1.5 -1.5v-2a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M15 11.5h4a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1 -1.5 1.5h-4a1.5 1.5 0 0 1 -1.5 -1.5v-6a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M5 15h4a1.5 1.5 0 0 1 1.5 1.5v2.5a1.5 1.5 0 0 1 -1.5 1.5h-4a1.5 1.5 0 0 1 -1.5 -1.5v-2.5a1.5 1.5 0 0 1 1.5 -1.5z"/>
+{%- elif nome == "inventario" %}<path d="M4 3.75h16a1.25 1.25 0 0 1 1.25 1.25v2.25a1.25 1.25 0 0 1 -1.25 1.25h-16a1.25 1.25 0 0 1 -1.25 -1.25v-2.25a1.25 1.25 0 0 1 1.25 -1.25z"/><path d="M4.5 8.5v10a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-10"/><path d="M10 12.5h4"/>
+{%- elif nome == "reintegro" %}<path d="M4 6.5h10.5"/><path d="M4 12h10.5"/><path d="M4 17.5h6.5"/><path d="M18 13.5v7"/><path d="M14.5 17h7"/>
+{%- elif nome == "bilanciamento" %}<path d="M12 3.5v16.5"/><path d="M8 20h8"/><path d="M4.5 7h15"/><path d="M4.5 7 2.25 13.25"/><path d="M4.5 7l2.25 6.25"/><path d="M2.25 13.25a2.25 2.25 0 0 0 4.5 0z"/><path d="M19.5 7l-2.25 6.25"/><path d="M19.5 7l2.25 6.25"/><path d="M17.25 13.25a2.25 2.25 0 0 0 4.5 0z"/>
+{%- elif nome == "trasferimenti" %}<path d="M4 8h15"/><path d="M15.5 4.5 19 8l-3.5 3.5"/><path d="M20 16H5"/><path d="M8.5 12.5 5 16l3.5 3.5"/>
+{%- elif nome == "shopify" %}<path d="M3.5 9 5.25 4.5h13.5L20.5 9"/><path d="M3.5 9a2.83 2.83 0 0 0 5.67 0a2.83 2.83 0 0 0 5.66 0a2.83 2.83 0 0 0 5.67 0"/><path d="M5 11.5v8.5h14v-8.5"/><path d="M10 20v-4.5h4V20"/>
+{%- elif nome == "anomalie" %}<path d="M10.27 4.5 2.9 17.25A2 2 0 0 0 4.63 20.25h14.74a2 2 0 0 0 1.73-3L13.73 4.5a2 2 0 0 0-3.46 0z"/><path d="M12 9.5v4.25"/><path d="M12 16.9h.01"/>
+{%- elif nome == "storico" %}<path d="M3.75 12a8.25 8.25 0 1 0 2.42-5.83L3.75 8.6"/><path d="M3.75 4.25V8.6H8.1"/><path d="M12 8v4.25l2.75 1.75"/>
+{%- elif nome == "impostazioni" %}<path d="M4 6.5h8.5"/><path d="M17.5 6.5H20"/><path d="M4 12h2.5"/><path d="M11.5 12H20"/><path d="M4 17.5h10"/><path d="M19 17.5h1"/><path d="M12.75 6.5a2.25 2.25 0 1 0 4.5 0a2.25 2.25 0 1 0 -4.5 0z"/><path d="M6.75 12a2.25 2.25 0 1 0 4.5 0a2.25 2.25 0 1 0 -4.5 0z"/><path d="M14.25 17.5a2.25 2.25 0 1 0 4.5 0a2.25 2.25 0 1 0 -4.5 0z"/>
+{%- elif nome == "scan" %}<path d="M3.75 8V6.25a2.5 2.5 0 0 1 2.5-2.5H8"/><path d="M16 3.75h1.75a2.5 2.5 0 0 1 2.5 2.5V8"/><path d="M20.25 16v1.75a2.5 2.5 0 0 1-2.5 2.5H16"/><path d="M8 20.25H6.25a2.5 2.5 0 0 1-2.5-2.5V16"/><path d="M7.5 8v8"/><path d="M10.25 8v8"/><path d="M13 8v5.5"/><path d="M13 15.75V16"/><path d="M16.5 8v8"/>
+{%- elif nome == "cerca" %}<path d="M4 10.75a6.75 6.75 0 1 0 13.5 0a6.75 6.75 0 1 0 -13.5 0z"/><path d="M15.75 15.75 20.5 20.5"/>
+{%- elif nome == "check" %}<path d="M4.75 12.5 9.5 17.25 19.25 7.25"/>
+{%- elif nome == "alert" %}<path d="M3.25 12a8.75 8.75 0 1 0 17.5 0a8.75 8.75 0 1 0 -17.5 0z"/><path d="M12 7.75v5"/><path d="M12 16.25h.01"/>
+{%- elif nome == "info" %}<path d="M3.25 12a8.75 8.75 0 1 0 17.5 0a8.75 8.75 0 1 0 -17.5 0z"/><path d="M12 11v5.25"/><path d="M12 7.75h.01"/>
+{%- elif nome == "freccia-destra" %}<path d="M4.5 12h15"/><path d="M13.5 6l6 6-6 6"/>
+{%- elif nome == "stampa" %}<path d="M7 8.75V3.75h10v5"/><path d="M7 17.25H5a1.75 1.75 0 0 1-1.75-1.75v-5A1.75 1.75 0 0 1 5 8.75h14a1.75 1.75 0 0 1 1.75 1.75v5A1.75 1.75 0 0 1 19 17.25h-2"/><path d="M8 13.75h8a1 1 0 0 1 1 1v4.5a1 1 0 0 1 -1 1h-8a1 1 0 0 1 -1 -1v-4.5a1 1 0 0 1 1 -1z"/>
+{%- elif nome == "scarica" %}<path d="M12 3.75v11"/><path d="M7.5 10.25 12 14.75l4.5-4.5"/><path d="M4 16.25v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+{%- elif nome == "aggiorna" %}<path d="M19.25 11a7.5 7.5 0 0 0-13.6-3.6"/><path d="M5.65 3.9v3.5h3.5"/><path d="M4.75 13a7.5 7.5 0 0 0 13.6 3.6"/><path d="M18.35 20.1v-3.5h-3.5"/>
+{%- elif nome == "utente" %}<path d="M8.25 8.25a3.75 3.75 0 1 0 7.5 0a3.75 3.75 0 1 0 -7.5 0z"/><path d="M4.75 20.25a7.25 7.25 0 0 1 14.5 0"/>
+{%- elif nome == "esci" %}<path d="M9.5 20.25H6.25a2 2 0 0 1-2-2V5.75a2 2 0 0 1 2-2H9.5"/><path d="M10.5 12h9.75"/><path d="M16.25 8l4 4-4 4"/>
+{%- else %}<circle cx="12" cy="12" r="8.75" stroke-dasharray="2 3"/>{# nome sconosciuto: segnaposto visibile #}
+{%- endif %}</svg>
+{%- endmacro %}

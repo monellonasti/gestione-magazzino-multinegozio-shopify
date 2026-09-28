@@ -1,0 +1,10 @@
+fastapi==0.141.1
+uvicorn==0.54.0
+Jinja2==3.1.6
+python-multipart==0.0.32
+openpyxl==3.1.5
+fpdf2==2.8.8
+tzdata==2026.4
+# solo per i test
+httpx==0.28.1
+pytest==9.1.1

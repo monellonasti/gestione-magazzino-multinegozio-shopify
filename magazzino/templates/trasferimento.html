@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}{% import "_icone.html" as ic %}
+{% set msg_altrove = (dove == 'scanner' and t.stato == 'in_preparazione' and not anteprima) %}
+{% block titolo %}{{ t.codice }}{% endblock %}
+{% block corpo %}
+{% set O, D = nome_negozio[t.origine], nome_negozio[t.destinazione] %}
+<header class="testata">
+  <div><p class="sopratitolo"><a class="indietro" href="/trasferimenti">Trasferimenti</a> · {{ TIPI_TRASF.get(t.tipo, t.tipo) }}</p>
+    <h1>{{ t.codice }} <small>{{ O }} → {{ D }}</small> {{ m.stato_trasf(t.stato) }}</h1></div>
+  <div class="azioni">{{ m.scarica("/trasferimenti/" ~ t.id ~ "/export", stampa="/trasferimenti/" ~ t.id ~ "/stampa",
+      etichetta_stampa="Stampa lista" if t.stato in ('approvato', 'in_preparazione') else "Stampa") }}</div>
+</header>
+{% set ordine = ["bozza", "approvato", "in_preparazione", "spedito", "ricevuto"] %}
+<ol class="passi" aria-label="Avanzamento">
+  {% for s in ordine %}<li class="{{ 'fatto' if t.stato != 'annullato' and ordine.index(t.stato) > loop.index0 }} {{ 'ora' if t.stato == s }}"{% if t.stato == s %} aria-current="step"{% endif %}>{{ STATI[s] }}</li>{% endfor %}
+</ol>
+<p class="meta">{{ TIPI_TRASF.get(t.tipo, t.tipo) }} · creato da {{ t.creato_da }} {{ quando(t.creato_il) }}
+  {%- if t.approvato_da %} · approvato da {{ t.approvato_da }} {{ quando(t.approvato_il) }}{% endif %}
+  {%- if t.spedito_il %} · spedito {{ quando(t.spedito_il) }}{% endif %}
+  {%- if t.ricevuto_il %} · ricevuto {{ quando(t.ricevuto_il) }}{% endif %}</p>
+{% if t.note %}<p class="note-trasf">{{ t.note }}</p>{% endif %}
+
+{% if anteprima %}
+{# ======================================================== anteprima: solo quello che verrà scritto #}
+  {% set spedisci = anteprima.azione == 'spedisci' %}
+  {% set N = D if not spedisci else O %}
+  {% macro modulo_conferma(spedisci) %}
+  <form method="post" action="/trasferimenti/{{ t.id }}/{{ anteprima.azione }}" class="in-linea">
+    {{ m.gettone_campo() }}<input type="hidden" name="conferma" value="1"><input type="hidden" name="versione" value="{{ t.versione }}">
+    {% if spedisci %}
+      {% for k, v in anteprima.valori.items() %}<input type="hidden" name="s_{{ k }}" value="{{ v }}">{% endfor %}
+      <input type="hidden" name="motivo" value="{{ anteprima.motivo }}">
+    {% else %}
+      {% for k, v in anteprima.valori_b.items() %}<input type="hidden" name="b_{{ k }}" value="{{ v }}">{% endfor %}
+      {% for k, v in anteprima.valori_d.items() %}<input type="hidden" name="d_{{ k }}" value="{{ v }}">{% endfor %}
+      <input type="hidden" name="nota" value="{{ anteprima.nota }}">
+    {% endif %}
+    <button class="grande">Conferma e aggiorna Shopify</button>
+    <a class="pulsante secondario" href="/trasferimenti/{{ t.id }}#righe">Torna indietro</a>
+  </form>
+  {% endmacro %}
+  <section class="conferma scheda" id="conferma" aria-labelledby="t-conferma">
+    <h2 id="t-conferma">{{ 'Conferma la spedizione' if spedisci else "Conferma l'arrivo" }}</h2>
+    <p class="riassunto">
+      {% if spedisci %}Escono <strong>{{ plurale(anteprima.pezzi, 'pezzo', 'pezzi') }}</strong> da {{ O }}
+        ({% for s in anteprima.stores %}{{ nomi_store[s] }}{% if not loop.last %} e {% endif %}{% endfor %}). Arriveranno a {{ D }} quando li ricevete.
+        Prima di scrivere il programma ricontrolla che ci siano ancora.
+        {% if anteprima.motivo %}<br>Mancano pezzi rispetto all'approvato: «{{ anteprima.motivo }}».{% endif %}
+      {% else %}Entrano <strong>{{ plurale(anteprima.pezzi, 'pezzo', 'pezzi') }}</strong> a {{ D }}
+        ({% for s in anteprima.stores %}{{ nomi_store[s] }}{% if not loop.last %} e {% endif %}{% endfor %}).
+        {% if anteprima.danneggiati %}{{ plurale(anteprima.danneggiati, 'pezzo rotto non si carica', 'pezzi rotti non si caricano') }}.{% endif %}
+      {% endif %}</p>
+    {% if anteprima.mancanti %}<p class="avviso attenzione">{{ plurale(anteprima.mancanti, 'movimento', 'movimenti') }} non si può scrivere: l'articolo non esiste su quel negozio Shopify. Andrà sistemato a mano.</p>{% endif %}
+    {{ modulo_conferma(spedisci) }}
+    <div class="tabella-scorre"><table class="dati">
+      <thead><tr><th></th><th>Prodotto</th>{% for s in anteprima.stores %}<th class="num">{{ nomi_store[s] }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for g in anteprima.gruppi %}
+        <tr><td>{{ m.foto(g.riga.immagine) }}</td><td>{{ m.nome(g.riga) }}</td>
+          {% for s in anteprima.stores %}{% set mv = g.celle.get(s) %}
+          <td class="num">{% if not mv %}—{% elif mv.mancante %}<span class="pill giallo">manca: da sistemare a mano</span>{% else %}<strong>{{ '%+d'|format(mv.delta) }}</strong>{% endif %}</td>{% endfor %}</tr>
+      {% else %}<tr><td colspan="9">Nessun movimento.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if anteprima.gruppi|length > 6 %}{{ modulo_conferma(spedisci) }}{% endif %}
+  </section>
+
+{% else %}
+{# ======================================================== lavoro, secondo lo stato #}
+<section id="righe">
+{% if t.stato == 'bozza' %}
+  {% if responsabile %}
+  <form method="post" action="/trasferimenti/{{ t.id }}/approva" id="approvazione" data-conferma="Approvare? I pezzi verranno prenotati (Shopify non cambia finché la merce non parte).">
+    {{ m.gettone_campo() }}<input type="hidden" name="versione" value="{{ t.versione }}">
+    <div class="tabella-scorre"><table class="dati a-schede">
+      <thead><tr><th></th><th>Prodotto</th><th class="num">Proposti</th><th class="num">Libero a {{ O }}</th><th class="num">Ha già {{ D }}</th><th>Perché</th><th class="num">Da approvare</th></tr></thead>
+      <tbody>{% for r in righe %}
+        <tr data-libero="{{ r.libero }}"><td>{{ m.foto(r.immagine) }}</td><td>{{ m.nome(r) }}{{ m.codici(r) }}</td>
+          <td class="num" data-label="Proposti">{{ r.proposta }}</td>
+          <td class="num grande" data-label="Libero a {{ O }}">{{ r.libero }}</td>
+          <td class="num" data-label="Ha già {{ D }}">{{ m.qta(r.ha_gia) }}</td>
+          <td class="piccolo" data-label="Perché">{{ r.nota or '' }}</td>
+          <td class="num" data-label="Da approvare">{{ m.passo_qta("q_" ~ r.id, r.proposta, etichetta="Da approvare") }}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    <div class="barra-azioni">
+      <span class="nota">Con 0 la riga resta fuori. Il limite è quello libero all'origine.</span><span class="spingi"></span>
+      <button class="secondario" formaction="/trasferimenti/{{ t.id }}/modifica">Salva senza approvare</button>
+      <button data-totale-approva>Approva ({{ plurale(righe|sum(attribute='proposta'), 'pezzo', 'pezzi') }})</button>
+    </div>
+  </form>
+  {% else %}
+  <div class="tabella-scorre"><table class="dati a-schede">
+    <thead><tr><th></th><th>Prodotto</th><th class="num">Proposti</th><th>Note</th></tr></thead>
+    <tbody>{% for r in righe %}<tr><td>{{ m.foto(r.immagine) }}</td><td>{{ m.nome(r) }}{{ m.codici(r) }}</td>
+      <td class="num grande" data-label="Proposti">{{ r.proposta }}</td><td class="piccolo">{{ r.nota or '' }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <p class="avviso info">In attesa del responsabile: finché non è approvato non si prepara.</p>
+  {% endif %}
+
+{% elif t.stato == 'approvato' %}
+  <div class="tabella-scorre"><table class="dati a-schede">
+    <thead><tr><th>Scaffale</th><th></th><th>Prodotto</th><th class="num">Da prelevare</th><th>Note</th></tr></thead>
+    <tbody>{% for r in righe %}<tr><td class="scaffale" data-label="Scaffale">{{ r.ubicazione or '—' }}</td><td>{{ m.foto(r.immagine) }}</td>
+      <td>{{ m.nome(r) }}{{ m.codici(r) }}</td><td class="num grande" data-label="Da prelevare">{{ r.approvata }}</td><td class="piccolo">{{ r.nota or '' }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <form method="post" action="/trasferimenti/{{ t.id }}/prepara" class="barra-azioni">
+    {{ m.gettone_campo() }}<input type="hidden" name="versione" value="{{ t.versione }}">
+    <span class="nota">{{ plurale(righe|length, 'articolo', 'articoli') }} · {{ plurale(prelievo.approvati_totale, 'pezzo', 'pezzi') }}, in ordine di scaffale.</span><span class="spingi"></span>
+    <a class="pulsante fantasma" href="/trasferimenti/{{ t.id }}/stampa" target="_blank">{{ ic.icona("stampa", "icona-s") }} Stampa lista</a>
+    <button class="grande">{{ ic.icona("scan") }} Inizia a preparare</button>
+  </form>
+
+{% elif t.stato == 'in_preparazione' %}
+  {% set esito_errore = (tipo_msg == 'errore') %}
+  <form method="post" action="/trasferimenti/{{ t.id }}/scansiona" class="scanner scheda fisso" id="scanner" data-lettore="prelievo"
+        data-url-preleva="/trasferimenti/{{ t.id }}/preleva">
+    <input type="hidden" name="gettone" value="{{ gettone() }}">
+    <label>Spara il codice (+1 pezzo)
+      <input name="codice" data-scanner autofocus autocomplete="off" placeholder="Codice a barre o SKU" enterkeyhint="done"></label>
+    <button class="secondario">+1</button>
+    <div class="esito-lettura{{ ' errore' if esito_errore }}" role="{{ 'alert' if esito_errore else 'status' }}" aria-live="polite" {% if not (dove == 'scanner' and msg) %}hidden{% endif %}>
+      {{ ic.icona('alert' if esito_errore else 'check') }}<span data-esito-testo>{{ msg if dove == 'scanner' else '' }}</span>
+      <button type="button" class="fantasma piccolo" data-annulla-ultima hidden>Annulla l'ultima</button></div>
+    <div class="avanzamento"><span data-avanz-testo>Presi {{ prelievo.prelevati_totale }} di {{ prelievo.approvati_totale }} pezzi</span>
+      <progress max="{{ prelievo.approvati_totale }}" value="{{ prelievo.prelevati_totale }}" data-avanz-barra>{{ prelievo.prelevati_totale }} di {{ prelievo.approvati_totale }}</progress>
+      <label class="spunta in-riga" data-solo-js hidden><input type="checkbox" data-suono checked> Suono</label></div>
+  </form>
+  <form method="post" action="/trasferimenti/{{ t.id }}/preleva" id="prelievo">
+    {{ m.gettone_campo() }}<input type="hidden" name="versione" value="{{ t.versione }}">
+    <div class="tabella-scorre"><table class="dati a-schede">
+      <thead><tr><th>Scaffale</th><th></th><th>Prodotto</th><th class="num">Presi</th><th>Note</th></tr></thead>
+      <tbody>{% for r in righe %}
+        <tr id="riga-{{ r.id }}" class="{{ 'completa' if r.prelevata >= (r.approvata or 0) }}{{ ' ultima' if r.id == ultima }}"
+            data-riga="{{ r.id }}" data-ean="{{ r.ean or '' }}" data-sku="{{ r.sku or '' }}" data-approvata="{{ r.approvata }}">
+          <td class="scaffale" data-label="Scaffale">{{ r.ubicazione or '—' }}</td><td>{{ m.foto(r.immagine) }}</td>
+          <td>{{ m.nome(r) }}{{ m.codici(r) }}</td>
+          <td class="num" data-label="Presi">{{ m.passo_qta("p_" ~ r.id, r.prelevata, r.approvata, etichetta="Presi") }}<span class="di">/ {{ r.approvata }}</span></td>
+          <td class="piccolo">{{ r.nota or '' }}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% set mancano = prelievo.approvati_totale - prelievo.prelevati_totale %}
+    <div class="barra-azioni">
+      <label class="cresce" data-motivo {% if prelievo.tutto %}hidden{% endif %}>Perché mancano pezzi? (serve solo se ne mancano)
+        <input name="motivo" placeholder="es. non trovati a scaffale"></label>
+      <span class="spingi"></span>
+      <button class="secondario" formaction="/trasferimenti/{{ t.id }}/preleva" data-salva-numeri>Salva i numeri</button>
+      <button formaction="/trasferimenti/{{ t.id }}/spedisci" data-spedisci class="{{ '' if prelievo.tutto else 'secondario' }}"
+        {% if not scritture %}disabled title="modifiche su Shopify spente"{% elif not prelievo.prelevati_totale %}disabled title="nessun pezzo preso"{% endif %}
+        data-testo-tutto="Controlla e spedisci" data-testo-parziale="Spedisci comunque: mancano {n}">
+        {{ 'Controlla e spedisci' if prelievo.tutto else 'Spedisci comunque: mancano ' ~ mancano }}</button>
+    </div>
+    {% if not scritture %}<p class="avviso info">Le modifiche alle giacenze su Shopify sono spente: puoi preparare e stampare, ma la spedizione dal programma è bloccata.
+      {% if responsabile %}Si accendono nel file .env (vedi docs/TECNICO.md).{% else %}Per spedire, avvisa il responsabile.{% endif %}</p>{% endif %}
+  </form>
+
+{% elif t.stato == 'spedito' %}
+  <div class="scanner scheda" id="scanner" data-lettore="conta" hidden>
+    <label>Conta con il lettore (+1 arrivato)
+      <input data-scanner autocomplete="off" placeholder="Codice a barre o SKU" enterkeyhint="done"></label>
+    <button type="button" class="secondario" data-conta-aggiungi>+1</button>
+    <div class="esito-lettura" role="status" aria-live="polite" hidden>{{ ic.icona('check') }}<span data-esito-testo></span></div>
+  </div>
+  <form method="post" action="/trasferimenti/{{ t.id }}/ricevi" id="ricezione">
+    {{ m.gettone_campo() }}
+    <div class="riga-azioni">
+      <p class="nota">I numeri sono già compilati come «arrivato tutto»: correggi solo quello che manca o è rotto.</p><span class="spingi"></span>
+      <button type="button" class="secondario" data-conta-lettore data-solo-js hidden>{{ ic.icona('scan', 'icona-s') }} Conta con il lettore</button>
+    </div>
+    <div class="tabella-scorre"><table class="dati a-schede">
+      <thead><tr><th>Scaffale a {{ D }}</th><th></th><th>Prodotto</th><th class="num">Spediti</th><th class="num">Già arrivati</th><th class="num">Arrivati ora (buoni)</th><th class="num">Rotti</th></tr></thead>
+      <tbody>{% for r in righe %}
+        <tr id="riga-{{ r.id }}" class="{{ 'completa' if not r.mancanti }}" data-riga="{{ r.id }}" data-ean="{{ r.ean or '' }}" data-sku="{{ r.sku or '' }}" data-residuo="{{ r.mancanti }}">
+          <td class="scaffale" data-label="Scaffale">{{ r.ubicazione_arrivo or '—' }}</td><td>{{ m.foto(r.immagine) }}</td>
+          <td>{{ m.nome(r) }}{{ m.codici(r) }}</td>
+          <td class="num" data-label="Spediti">{{ r.spedita }}</td>
+          <td class="num" data-label="Già arrivati">{{ r.ricevuta }}{% if r.danneggiata %} <small>+ {{ plurale(r.danneggiata, 'rotto', 'rotti') }}</small>{% endif %}</td>
+          <td class="num" data-label="Arrivati ora">{% if r.mancanti %}{{ m.passo_qta("b_" ~ r.id, r.mancanti, r.mancanti, etichetta="Arrivati ora (buoni)") }}{% else %}<span class="zero">—</span>{% endif %}</td>
+          <td class="num" data-label="Rotti">{% if r.mancanti %}{{ m.passo_qta("d_" ~ r.id, 0, r.mancanti, etichetta="Rotti") }}{% else %}<span class="zero">—</span>{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    <div class="barra-azioni">
+      <label class="cresce">Nota <input name="nota" placeholder="es. primo collo"></label><span class="spingi"></span>
+      <button {% if not scritture %}disabled{% endif %}>Controlla e registra</button>
+    </div>
+  </form>
+  <details class="scheda">
+    <summary>Non arriverà altro? Chiudi la ricezione</summary>
+    <form method="post" action="/trasferimenti/{{ t.id }}/chiudi-ricezione" data-conferma="Chiudere la ricezione? I pezzi non ricevuti diventano differenze da far chiudere al responsabile.">
+      {{ m.gettone_campo() }}
+      <label>Cosa manca e perché <textarea name="nota" rows="2" required></textarea></label>
+      <button class="secondario">Chiudi ricezione</button>
+    </form>
+  </details>
+
+{% else %}
+  <div class="tabella-scorre"><table class="dati a-schede">
+    <thead><tr><th></th><th>Prodotto</th>{% if t.stato == 'ricevuto' %}<th class="num">Spediti</th><th class="num">Arrivati buoni</th><th class="num">Rotti</th><th class="num">Mancanti</th>{% else %}<th class="num">Proposti</th>{% endif %}<th>Note</th></tr></thead>
+    <tbody>{% for r in righe %}<tr><td>{{ m.foto(r.immagine) }}</td><td>{{ m.nome(r) }}{{ m.codici(r) }}</td>
+      {% if t.stato == 'ricevuto' %}<td class="num" data-label="Spediti">{{ r.spedita }}</td><td class="num grande" data-label="Arrivati buoni">{{ r.ricevuta }}</td>
+        <td class="num" data-label="Rotti">{{ m.qta(r.danneggiata) }}</td><td class="num" data-label="Mancanti">{% if r.mancanti %}<span class="neg">{{ r.mancanti }}</span>{% else %}{{ m.qta(0) }}{% endif %}</td>
+      {% else %}<td class="num" data-label="Proposti">{{ r.proposta }}</td>{% endif %}
+      <td class="piccolo">{{ r.nota or '' }}{% if r.motivo_differenza %}<br><em>{{ r.motivo_differenza }}</em>{% endif %}{% if r.esito_differenza %}<br><span class="chip ok">{{ ESITI[r.esito_differenza] }}</span>{% endif %}</td></tr>{% endfor %}</tbody>
+  </table></div>
+{% endif %}
+</section>
+
+{% if differenze %}
+<section class="scheda" id="differenze">
+  <h2>Differenze da chiudere <span class="conteggio">{{ differenze|length }}</span></h2>
+  {% for r in differenze %}
+  <div class="differenza">
+    <div>{{ m.nome(r) }} spediti {{ r.spedita }} · arrivati buoni {{ r.ricevuta }}{% if r.danneggiata %} · <strong>{{ plurale(r.danneggiata, 'rotto', 'rotti') }}</strong>{% endif %}{% if r.mancanti %} · <strong class="neg">{{ plurale(r.mancanti, 'mancante', 'mancanti') }}</strong>{% endif %}</div>
+    {% if responsabile %}
+    <form method="post" action="/trasferimenti/{{ t.id }}/differenza" class="in-linea">
+      {{ m.gettone_campo() }}<input type="hidden" name="riga" value="{{ r.id }}">
+      <select name="esito" required><option value="">Come si chiude…</option>
+        {% for k, v in ESITI.items() %}{% if r.mancanti or k in ('danneggiata_scartata', 'persa') %}<option value="{{ k }}">{{ v }}</option>{% endif %}{% endfor %}</select>
+      <input name="nota" placeholder="cosa hai verificato" required>
+      <button class="secondario">Chiudi la differenza</button>
+    </form>
+    {% else %}<p class="nota">La chiude il responsabile.</p>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if responsabile and t.stato in ('bozza', 'approvato', 'in_preparazione') %}
+<details class="scheda zona-pericolo">
+  <summary>Annulla il trasferimento</summary>
+  <form method="post" action="/trasferimenti/{{ t.id }}/annulla" class="griglia-form" data-conferma="Annullare {{ t.codice }}? I pezzi prenotati tornano liberi.">
+    {{ m.gettone_campo() }}<input type="hidden" name="versione" value="{{ t.versione }}">
+    <label>Motivo <input name="motivo" required></label>
+    <button class="pericolo">Annulla trasferimento</button>
+  </form>
+</details>
+{% endif %}
+{% endif %}
+
+{% if ops and not anteprima %}
+<section class="scheda" id="operazioni" {% if op_in_corso %}data-ricarica="3"{% endif %}>
+  {% macro tabella_op() %}
+  <div class="tabella-scorre"><table class="semplice">
+    <thead><tr><th>Movimento</th><th>Negozio Shopify</th><th>Prodotto</th><th class="num">Pezzi</th><th>Esito</th></tr></thead>
+    <tbody>{% for o in ops %}{% set riga = righe|selectattr('id', 'equalto', o.riga_id)|first %}
+      <tr><td>{{ OP_TIPI.get(o.tipo, o.tipo) }}</td><td>{{ nomi_store[o.store] }}</td><td>{% if riga %}{{ m.nome(riga) }}{% endif %}</td>
+        <td class="num">{{ '%+d'|format(o.delta) }}</td>
+        <td><span class="op op-{{ o.stato }}">{{ OP_STATI.get(o.stato, o.stato) }}</span>{% if o.stato != 'fatta' and o.errore %}<br><small>{{ o.errore }}</small>{% endif %}
+          {% if responsabile and o.stato in ('conflitto', 'errore', 'incerta', 'da_verificare') %}
+          <form method="post" action="/operazioni/{{ o.id }}/{{ 'riprova' if o.stato in ('conflitto', 'errore') else 'applicata' }}" class="decisione">
+            {{ m.gettone_campo() }}<input type="hidden" name="torna" value="/trasferimenti/{{ t.id }}#operazioni">
+            <input name="nota" placeholder="cosa hai verificato (obbligatorio)" required>
+            {% if o.stato in ('conflitto', 'errore') %}<button class="secondario piccolo">Riprova</button>
+              <button class="secondario piccolo" formaction="/operazioni/{{ o.id }}/annulla">Non serve più</button>
+            {% else %}<button class="secondario piccolo">C'è su Shopify</button>
+              <button class="secondario piccolo" formaction="/operazioni/{{ o.id }}/non_applicata">Non c'è: rifalla</button>{% endif %}
+          </form>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endmacro %}
+  {% if op_bloccate %}
+    <h2>Aggiornamenti Shopify: {{ plurale(op_bloccate|length, 'da controllare', 'da controllare') }}</h2>
+    {% if responsabile %}<p class="nota">«In attesa di conferma»: il programma riprova da solo e Shopify non può applicarla due volte. Dopo 23 ore controlla lo storico della giacenza su Shopify e scegli.</p>
+    {% else %}<p class="nota">Shopify non ha confermato alcuni aggiornamenti: li controlla il responsabile. Tu puoi andare avanti.</p>{% endif %}
+    {{ tabella_op() }}
+  {% elif op_in_corso %}
+    <h2><span class="in-corso">Aggiornamento di Shopify in corso: {{ op_fatte }} di {{ ops|length }}</span></h2>
+    {{ tabella_op() }}
+  {% else %}
+    <details><summary>{{ ic.icona('check', 'icona-s') }} Shopify aggiornato: {{ op_fatte }} di {{ ops|length }}</summary>{{ tabella_op() }}</details>
+  {% endif %}
+</section>
+{% endif %}
+
+<details class="scheda"><summary>Storico del trasferimento</summary>
+  <ul class="storia">{% for s in storia %}<li><span class="data">{{ locale(s.il) }}</span> {{ s.utente }} — {{ s.azione }}</li>{% endfor %}</ul>
+</details>
+{% endblock %}

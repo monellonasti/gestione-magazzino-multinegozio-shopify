@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}{% import "_icone.html" as ic %}
+{% block titolo %}Da fare{% endblock %}
+{% block corpo %}
+{% set k = compiti %}
+<header class="testata">
+  <div><p class="sopratitolo">{{ u.nome }}</p><h1>Da fare</h1></div>
+  <div class="azioni">{% if k.totale %}<span class="nota">{{ plurale(k.totale, 'cosa da fare', 'cose da fare') }}</span>{% endif %}</div>
+</header>
+
+{% macro sezione(titolo, n, id) %}
+<section class="compiti" id="{{ id }}" aria-labelledby="t-{{ id }}">
+  <h2 id="t-{{ id }}">{{ titolo }}{% if n %} <span class="conteggio">{{ n }}</span>{% endif %}</h2>
+  {{ caller() }}
+</section>
+{% endmacro %}
+
+{% if not responsabile %}
+  {# ------------------------------------------------------------------ magazziniere #}
+  {% call sezione("Da preparare", k.da_preparare|length, "da-preparare") %}
+    {% if k.da_preparare %}<ul>{% for t in k.da_preparare %}
+      <li><div class="cosa"><strong>{{ t.codice }}</strong>{{ nome_negozio[t.origine] }} → {{ nome_negozio[t.destinazione] }}
+          <small>{{ plurale(t.n_righe, 'articolo', 'articoli') }} · {{ plurale(t.pezzi, 'pezzo', 'pezzi') }}{% if t.stato == 'in_preparazione' %} · presi {{ t.prelevati }} di {{ t.pezzi }}{% endif %}</small></div>
+        <a class="pulsante{{ ' secondario' if not loop.first }}" href="/trasferimenti/{{ t.id }}{{ '?dove=scanner#scanner' if t.stato == 'in_preparazione' }}">{{ ic.icona('scan', 'icona-s') }} {{ 'Continua' if t.stato == 'in_preparazione' else 'Prepara' }}</a></li>
+    {% endfor %}</ul>{% else %}<p class="niente">Niente da preparare</p>{% endif %}
+  {% endcall %}
+
+  {% call sezione("Da ricevere", k.da_ricevere|length, "da-ricevere") %}
+    {% if k.da_ricevere %}<ul>{% for t in k.da_ricevere %}
+      <li><div class="cosa"><strong>{{ t.codice }}</strong>da {{ nome_negozio[t.origine] }} a {{ nome_negozio[t.destinazione] }}
+          <small>spediti {{ t.spediti }}{% if t.arrivati %} · già arrivati {{ t.arrivati }}{% endif %}</small></div>
+        <a class="pulsante secondario" href="/trasferimenti/{{ t.id }}#righe">Ricevi</a></li>
+    {% endfor %}</ul>{% else %}<p class="niente">Niente in arrivo</p>{% endif %}
+  {% endcall %}
+
+  {% call sezione("Movimenti fatti su Shopify da sistemare", k.shopify.totale, "shopify") %}
+    {% if k.shopify.totale %}<ul><li><div class="cosa">
+        {%- if k.shopify.carichi %}{{ plurale(k.shopify.carichi, 'arrivo dal fornitore', 'arrivi dal fornitore') }}{% endif %}
+        {%- if k.shopify.carichi and k.shopify.uscite %} · {% endif %}
+        {%- if k.shopify.uscite %}{{ plurale(k.shopify.uscite, 'uscita senza destinazione', 'uscite senza destinazione') }}{% endif %}
+        <small>registrati su un solo negozio Shopify: decidi dove va la merce</small></div>
+      <a class="pulsante secondario" href="/trasferimenti/shopify">Sistema</a></li></ul>
+    {% else %}<p class="niente">Niente da sistemare</p>{% endif %}
+  {% endcall %}
+
+  {% if k.in_attesa %}<p class="nota">In attesa del responsabile: {% for t in k.in_attesa %}<a href="/trasferimenti/{{ t.id }}">{{ t.codice }}</a> ({{ plurale(t.pezzi, 'pezzo', 'pezzi') }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
+
+{% else %}
+  {# ------------------------------------------------------------------ responsabile #}
+  <div class="due-colonne">
+  {% call sezione("Da approvare", k.da_approvare|length, "da-approvare") %}
+    {% if k.da_approvare %}<ul>{% for t in k.da_approvare %}
+      <li><div class="cosa"><strong>{{ t.codice }}</strong>{{ nome_negozio[t.origine] }} → {{ nome_negozio[t.destinazione] }}
+          <small>{{ plurale(t.n_righe, 'riga', 'righe') }} · {{ plurale(t.pezzi, 'pezzo', 'pezzi') }} · {{ TIPI_TRASF.get(t.tipo, t.tipo)|lower }} · da {{ t.creato_da }} {{ quando(t.creato_il) }}</small></div>
+        <a class="pulsante{{ ' secondario' if not loop.first }}" href="/trasferimenti/{{ t.id }}">Apri</a></li>
+    {% endfor %}</ul>{% else %}<p class="niente">Niente da approvare</p>{% endif %}
+  {% endcall %}
+
+  {% call sezione("Differenze da chiudere", k.differenze|length, "differenze") %}
+    {% if k.differenze %}<ul>{% for t in k.differenze %}
+      <li><div class="cosa"><strong>{{ t.codice }}</strong>{{ nome_negozio[t.origine] }} → {{ nome_negozio[t.destinazione] }}
+          <small>{% if t.mancanti %}{{ plurale(t.mancanti, 'pezzo mancante', 'pezzi mancanti') }}{% endif %}{% if t.mancanti and t.danneggiati %} · {% endif %}{% if t.danneggiati %}{{ plurale(t.danneggiati, 'rotto', 'rotti') }}{% endif %}</small></div>
+        <a class="pulsante secondario" href="/trasferimenti/{{ t.id }}#differenze">Chiudi</a></li>
+    {% endfor %}</ul>{% else %}<p class="niente">Nessuna differenza aperta</p>{% endif %}
+  {% endcall %}
+  </div>
+
+  {% call sezione("Aggiornamenti Shopify da controllare", k.aggiornamenti|length, "aggiornamenti") %}
+    {% if k.aggiornamenti %}<ul>{% for o in k.aggiornamenti[:5] %}
+      <li><div class="cosa"><strong>{{ o.codice or ('rettifica ' ~ o.rettifica_id if o.rettifica_id else 'movimento Shopify') }}</strong>{{ OP_TIPI.get(o.tipo, o.tipo) }} {{ '%+d'|format(o.delta) }} su {{ nomi_store[o.store] }}
+          <small><span class="op op-{{ o.stato }}">{{ OP_STATI[o.stato] }}</span> {{ o.errore or '' }}</small></div>
+        <a class="pulsante secondario" href="{{ '/trasferimenti/' ~ o.trasferimento_id ~ '#operazioni' if o.trasferimento_id else '/storico#operazioni' }}">Apri</a></li>
+    {% endfor %}{% if k.aggiornamenti|length > 5 %}<li><a href="/storico?op=bloccate#operazioni">Vedi tutti ({{ k.aggiornamenti|length }})</a></li>{% endif %}</ul>
+    {% else %}<p class="niente">Shopify è aggiornato</p>{% endif %}
+  {% endcall %}
+
+  {% call sezione("Movimenti fatti su Shopify da sistemare", k.shopify.totale, "shopify") %}
+    {% if k.shopify.totale %}<ul><li><div class="cosa">
+        {%- if k.shopify.carichi %}{{ plurale(k.shopify.carichi, 'arrivo dal fornitore', 'arrivi dal fornitore') }}{% endif %}
+        {%- if k.shopify.carichi and k.shopify.uscite %} · {% endif %}
+        {%- if k.shopify.uscite %}{{ plurale(k.shopify.uscite, 'uscita senza destinazione', 'uscite senza destinazione') }}{% endif %}
+        <small>registrati su un solo negozio Shopify</small></div>
+      <a class="pulsante secondario" href="/trasferimenti/shopify">Sistema</a></li></ul>
+    {% else %}<p class="niente">Niente da sistemare</p>{% endif %}
+  {% endcall %}
+
+  <section class="compiti" id="anomalie" aria-labelledby="t-anomalie">
+    <h2 id="t-anomalie">Anomalie {% if k.anomalie.gravi %}<span class="conteggio grave" title="gravi">{{ k.anomalie.gravi }}</span>{% endif %}</h2>
+    {% if k.anomalie.totale %}<ul><li><div class="cosa">
+        {% if k.anomalie.gravi %}<strong>{{ plurale(k.anomalie.gravi, 'grave', 'gravi') }}</strong>{% endif %}
+        <small>{% for tipo, n in k.anomalie.per_tipo %}{{ TIPI_ANOMALIA.get(tipo, tipo) }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</small></div>
+      <a class="pulsante secondario" href="/anomalie">Apri</a></li></ul>
+    {% else %}<p class="niente">Nessuna anomalia aperta</p>{% endif %}
+  </section>
+
+  {% if k.in_corso %}<p class="nota">In corso: {% for t in k.in_corso %}<a href="/trasferimenti/{{ t.id }}">{{ t.codice }}</a>
+    {%- if t.stato == 'in_preparazione' %} in preparazione ({{ t.prelevati }} di {{ t.pezzi }}){% elif t.stato == 'spedito' %} in viaggio{% else %} da preparare{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+{% endif %}
+
+{% set ss = k.sotto_scorta %}
+{% if ss.values()|sum %}
+<section class="compiti" id="sotto-scorta">
+  <h2>Sotto la scorta minima</h2>
+  <ul><li><div class="cosa">{% for n in negozi %}{{ n.nome }} <strong>{{ ss[n.id] }}</strong>{% if not loop.last %} · {% endif %}{% endfor %}
+      <small>articoli sotto la minima che l'altro negozio potrebbe coprire</small></div>
+    <a class="pulsante secondario" href="/inventario?filtro=sotto_scorta">Vedi</a>
+    <a class="pulsante secondario" href="/reintegro">Nuova lista</a></li></ul>
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}{% import "_icone.html" as ic %}
+{% block titolo %}Trasferimenti{% endblock %}
+{% block corpo %}
+<header class="testata">
+  <div><h1>Trasferimenti</h1></div>
+  <div class="azioni"><a class="pulsante secondario" href="/reintegro">{{ ic.icona("reintegro", "icona-s") }} Nuova lista di reintegro</a></div>
+</header>
+<nav class="linguette" aria-label="Trasferimenti">
+  <a class="attivo" aria-current="page" href="/trasferimenti">Fra negozi</a>
+  <a href="/trasferimenti/shopify">Fatti su Shopify{% if da_shopify %} <span class="conteggio">{{ da_shopify }}</span>{% endif %}</a>
+</nav>
+<nav class="schede-filtro" aria-label="Filtra per stato">
+  {% for v, nome in FILTRI_TRASF.items() %}
+  <a href="/trasferimenti{{ '?stato=' ~ v if v != 'aperti' }}" class="{{ 'attivo' if filtro == v or (v == 'da_preparare' and filtro in ('approvato', 'in_preparazione')) }}"
+     {% if filtro == v %}aria-current="page"{% endif %}>{{ nome }}{% if v not in ('tutti', 'ricevuto', 'annullato') and conta[v] %} ({{ conta[v] }}){% endif %}</a>{% endfor %}
+</nav>
+{% if righe %}
+<div class="tabella-scorre">
+<table class="dati elenco-trasf a-schede">
+  <thead><tr><th>Codice</th><th>Da → A</th><th>Stato</th><th>Prossimo passo</th><th class="num">Pezzi</th><th>Creato</th></tr></thead>
+  <tbody>{% for t in righe %}
+    <tr>
+      <td class="in-riga primo"><a href="/trasferimenti/{{ t.id }}{{ '?dove=scanner#scanner' if t.stato == 'in_preparazione' }}"><strong>{{ t.codice }}</strong></a>
+        <small class="tipo">{{ TIPI_TRASF.get(t.tipo, t.tipo) }}</small></td>
+      <td>{{ nome_negozio[t.origine] }} → {{ nome_negozio[t.destinazione] }}</td>
+      <td class="in-riga primo">{{ m.stato_trasf(t.stato) }}</td>
+      <td>{% set testo, tono = t.prossimo %}{% if testo %}{% if tono %}<span class="chip {{ tono }}">{{ testo }}</span>{% else %}<span class="nota">{{ testo }}</span>{% endif %}{% else %}<span class="assente">—</span>{% endif %}</td>
+      <td class="num" data-et="Pezzi">{{ t.pezzi or 0 }}<small>{{ plurale(t.n_righe, 'articolo', 'articoli') }}</small></td>
+      <td class="data">{{ locale(t.creato_il, '%d/%m %H:%M') }}<small>{{ t.creato_da }}</small></td>
+    </tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% if troncato %}<p class="nota">Si vedono gli ultimi 300.</p>{% endif %}
+{% else %}
+{% set vuoti = {"aperti": "Nessun trasferimento aperto: tutto ricevuto e chiuso.", "bozza": "Nessuna bozza da approvare.",
+    "da_preparare": "Niente da preparare.", "approvato": "Niente da preparare.", "in_preparazione": "Niente in preparazione.",
+    "spedito": "Niente in viaggio.", "ricevuto": "Nessun trasferimento ricevuto.", "annullato": "Nessun trasferimento annullato.",
+    "tutti": "Ancora nessun trasferimento."} %}
+<div class="vuoto">{{ vuoti[filtro] }} Le liste di reintegro diventano trasferimenti: <a href="/reintegro">crea una lista</a>.</div>
+{% endif %}
+{% endblock %}

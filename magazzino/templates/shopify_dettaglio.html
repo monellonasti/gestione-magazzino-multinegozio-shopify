@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}
+{% block titolo %}{{ ts.nome }} Shopify{% endblock %}
+{% block corpo %}
+{% set url = "/trasferimenti/shopify/" ~ ts.store ~ "/" ~ ts.numero %}
+<header class="testata">
+  <div><p class="sopratitolo"><a class="indietro" href="/trasferimenti/shopify">Fatti su Shopify</a> · uscita senza destinazione</p>
+    <h1>{{ ts.nome }} <small>da {{ ts.origine_nome }} → nessuna destinazione</small>
+      <span class="stato {{ 'st-in_preparazione' if ts.esito == 'da_destinare' else 'st-ricevuto' }}">{{ ESITI_SHOPIFY.get(ts.esito, ts.esito) }}</span></h1></div>
+</header>
+<p class="meta">Creato su {{ nomi_store[ts.store] }} {{ quando(ts.creato_il) }} · su Shopify: {{ STATI_SHOPIFY.get(ts.stato_shopify, ts.stato_shopify) }}
+  · {{ plurale(ts.pezzi, 'pezzo uscito', 'pezzi usciti') }}{% if ts.deciso_da %} · deciso da {{ ts.deciso_da }} {{ quando(ts.deciso_il) }}{% endif %}</p>
+{% if ts.nota %}<p class="note-trasf">Nota su Shopify: «{{ ts.nota }}»</p>{% endif %}
+{% if ts.nota_decisione %}<p class="note-trasf">Nota della decisione: {{ ts.nota_decisione }}</p>{% endif %}
+{% if collegato %}<p class="avviso info">Ora è il trasferimento <a href="/trasferimenti/{{ collegato.id }}"><strong>{{ collegato.codice }}</strong></a>
+  ({{ nome_negozio[collegato.origine] }} → {{ nome_negozio[collegato.destinazione] }}, {{ STATI[collegato.stato]|lower }}).</p>{% endif %}
+
+{% if ts.esito == 'da_destinare' and anteprima %}
+  {# ------------------------------------------------ anteprima: in cima, con tutto quello che verrà scritto #}
+  <section class="conferma scheda" id="conferma">
+    <h2>Controlla e conferma: {% if anteprima.scelta == 'uscita' %}uscita definitiva{% elif anteprima.scelta == 'gestito_fuori' %}già sistemata fuori dal programma{% else %}a {{ nome_negozio[anteprima.scelta] }}{% endif %}</h2>
+    {% if anteprima.scelta not in ('uscita', 'gestito_fuori') and not anteprima.subito %}
+      <p>Nasce un trasferimento <strong>spedito</strong> verso {{ nome_negozio[anteprima.scelta] }}: si carica quando la merce viene ricevuta, pezzo per pezzo.</p>
+    {% endif %}
+    {% if anteprima.movimenti %}
+    <p class="riassunto">Il programma scrive su Shopify questi movimenti. {{ nomi_store[ts.store] }} non si tocca: Shopify l'ha già scalato.</p>
+    <div class="tabella-scorre"><table class="semplice">
+      <thead><tr><th>Prodotto</th><th>Negozio Shopify</th><th>Movimento</th><th class="num">Pezzi</th></tr></thead>
+      <tbody>{% for mv in anteprima.movimenti %}
+        <tr><td>{{ m.nome(mv.riga.articolo) }}</td><td>{{ nomi_store[mv.store] }}{% if not mv.canale.principale %} <small>(online, stessa merce)</small>{% endif %}</td>
+          <td>{{ OP_TIPI.get(mv.tipo, mv.tipo) }}</td>
+          <td class="num">{% if mv.mancante %}<span class="pill giallo">manca su questo negozio: da sistemare a mano</span>{% else %}<strong>{{ '%+d'|format(mv.delta) }}</strong>{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% elif anteprima.scelta == 'gestito_fuori' %}<p>Nessun aggiornamento su Shopify: il movimento esce dall'elenco con la tua nota.</p>
+    {% else %}<p>Nessun aggiornamento su Shopify.</p>{% endif %}
+    <form method="post" action="{{ url }}" class="in-linea">
+      {{ m.gettone_campo() }}<input type="hidden" name="conferma" value="1">
+      <input type="hidden" name="scelta" value="{{ anteprima.scelta }}"><input type="hidden" name="nota" value="{{ anteprima.nota }}">
+      <input type="hidden" name="scala_specchi" value="{{ '1' if anteprima.scala else '0' }}"><input type="hidden" name="subito" value="{{ '1' if anteprima.subito else '0' }}">
+      <button class="grande">Conferma{% if anteprima.movimenti %} e aggiorna Shopify{% endif %}</button>
+      <a class="pulsante secondario" href="{{ url }}">Torna indietro</a>
+    </form>
+  </section>
+{% endif %}
+
+<section class="scheda">
+  <h2>Merce uscita</h2>
+  <div class="tabella-scorre"><table class="dati">
+    <thead><tr><th><span class="solo-lettori">Foto</span></th><th>Prodotto</th><th class="num">Pezzi</th>
+      {% for n in negozi %}<th class="num">Disponibili a {{ n.nome }}</th>{% endfor %}<th>Nel programma</th></tr></thead>
+    <tbody>{% for r in righe %}
+      <tr><td>{{ m.foto(r.articolo.immagine if r.articolo else '') }}</td>
+        <td>{% if r.articolo %}{{ m.nome(r.articolo) }}{% else %}{{ r.titolo }}{% endif %}{{ m.codici(r.articolo or r) }}</td>
+        <td class="num grande">{{ r.quantita }}</td>
+        {% for n in negozi %}<td class="num">{{ m.qta(r.disp.get(n.id)) }}</td>{% endfor %}
+        <td>{% if r.chiave %}<span class="assoc ok">Riconosciuto</span>{% else %}<span class="assoc ko">Non riconosciuto: da sistemare a mano</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+
+{% if ts.esito == 'da_destinare' and not anteprima %}
+  <form method="post" action="{{ url }}#conferma" class="scheda" data-uscita>
+    {{ m.gettone_campo() }}
+    <h2>Dov'è andata la merce?</h2>
+    {% for x in candidati %}
+      <label class="scelta"><input type="radio" name="scelta" value="{{ x.negozio.id }}" {{ 'checked' if loop.first }}>
+        <span><strong>A {{ x.negozio.nome }}</strong>{% if loop.first %} <span class="pill verde">suggerito</span>{% endif %}
+          <small>{{ x.motivi|join('; ') }}</small></span></label>
+    {% endfor %}
+    <label class="scelta"><input type="radio" name="scelta" value="uscita">
+      <span><strong>Uscita definitiva</strong><small>reso al fornitore, omaggio, scarto: la merce non va in nessun negozio</small></span></label>
+    {% if responsabile %}
+    <label class="scelta"><input type="radio" name="scelta" value="gestito_fuori">
+      <span><strong>Già sistemata fuori dal programma</strong><small>per esempio con gli script: nessun aggiornamento, serve una nota</small></span></label>
+    {% endif %}
+
+    <fieldset class="modi" data-se-negozio><legend>È già arrivata?</legend>
+      <label class="scelta"><input type="radio" name="subito" value="1" checked><span><strong>Sì, carica subito</strong><small>i pezzi entrano ora nel negozio scelto</small></span></label>
+      <label class="scelta"><input type="radio" name="subito" value="0"><span><strong>No, è in viaggio</strong><small>si carica all'arrivo, con il controllo pezzo per pezzo</small></span></label>
+    </fieldset>
+
+    {% if specchi %}
+    <details class="opzioni" {{ 'open' if doppi }}><summary>Opzioni</summary>
+      <label class="spunta"><input type="checkbox" name="scala_specchi" value="1" {{ '' if doppi else 'checked' }}>
+        Togli i pezzi anche da {{ specchi|join(', ') }} (è la stessa merce: Shopify non l'ha fatto)</label>
+      {% if doppi %}<p class="avviso info">Su {{ nomi_store[doppi[0].store] }} c'è {{ doppi[0].nome }} con gli stessi {{ doppi[0].pezzi }} pezzi, creato a pochi giorni di distanza:
+        se è lo stesso movimento già fatto a mano anche lì, lascia la spunta tolta.</p>{% endif %}
+    </details>
+    {% endif %}
+    <label>Nota <input name="nota" placeholder="facoltativa; obbligatoria per «già sistemata»"></label>
+    <div class="riga-azioni"><span class="spingi"></span><button>Controlla prima di confermare</button></div>
+    {% if not scritture %}<p class="avviso info">Aggiornamenti su Shopify spenti: puoi vedere il suggerimento e il controllo, ma confermare solo quando saranno accesi.</p>{% endif %}
+  </form>
+{% endif %}
+{% endblock %}

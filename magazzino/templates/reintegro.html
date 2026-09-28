@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}
+{% block titolo %}Reintegro{% endblock %}
+{% block corpo %}
+{% set A, B = negozi[0], negozi[1] %}
+{% set O, D = nome_negozio[par.origine], nome_negozio[par.destinazione] %}
+{% set query = {"direzione": par.direzione, "modo": par.modo, "dal": par.dal.isoformat(), "al": par.al.isoformat(), "q": par.q} %}
+<header class="testata"><div><h1>Reintegro</h1></div></header>
+<nav class="linguette" aria-label="Reintegro">
+  <a class="attivo" aria-current="page" href="/reintegro">Lista di reintegro</a>
+  <a href="/bilanciamento">Bilanciamento</a>
+</nav>
+
+<form class="scheda modulo-calcolo" method="get" action="/reintegro" id="calcolo">
+  <input type="hidden" name="calcola" value="1">
+  <div class="griglia-form in-cima">
+    <label>Da → A
+      <select name="direzione">
+        {% for o, d in [(A, B), (B, A)] %}{% set v = o.id ~ '>' ~ d.id %}<option value="{{ v }}" {{ 'selected' if par.direzione == v }}>{{ o.nome }} → {{ d.nome }}</option>{% endfor %}
+      </select></label>
+    <label class="cresce">Solo articoli che contengono <input name="q" value="{{ par.q }}" placeholder="nome, SKU o codice a barre"></label>
+  </div>
+  <fieldset class="modi"><legend>Cosa rimettere</legend>
+    <label class="scelta"><input type="radio" name="modo" value="venduto" data-periodo {{ 'checked' if par.modo == 'venduto' }}>
+      <span><strong>Ciò che è stato venduto</strong><small>rimette i pezzi usciti nel periodo e non ancora rimessi</small></span></label>
+    <label class="scelta"><input type="radio" name="modo" value="scorta" data-periodo {{ 'checked' if par.modo == 'scorta' }}>
+      <span><strong>Fino alla scorta obiettivo</strong><small>gli articoli sotto la minima tornano all'obiettivo</small></span></label>
+  </fieldset>
+  <fieldset class="periodo" data-campo-periodo><legend>Periodo delle vendite</legend>
+    <label>Dal <input type="date" name="dal" value="{{ par.dal.isoformat() }}"></label>
+    <label>Al <input type="date" name="al" value="{{ par.al.isoformat() }}"></label>
+    <span class="scorciatoie">Ultimi
+      {% for n, dal, al in scorciatoie %}<a href="/reintegro?{{ dict(query, modo='venduto', dal=dal, al=al, calcola=1)|q }}" data-giorni="{{ n }}"
+        class="{{ 'attivo' if par.modo == 'venduto' and query.dal == dal and query.al == al }}">{{ n }}</a>{% if not loop.last %} · {% endif %}{% endfor %} giorni</span>
+  </fieldset>
+  <div class="riga-azioni"><button>Calcola</button>
+    <span class="nota"><strong>Calcolare non sposta nulla.</strong> La merce si muove solo quando il trasferimento, approvato, viene spedito.</span></div>
+</form>
+
+{% if piano is not none %}
+  {% if da_fare %}
+  <form method="post" action="/reintegro/crea" data-conta-selezione id="risultato">
+    {{ m.gettone_campo() }}
+    {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <div class="titolo-riga">
+      <h2>Da {{ O }} a {{ D }} <small>{{ plurale(da_fare|length, 'riga', 'righe') }} · {{ plurale(da_fare|sum(attribute='quantita'), 'pezzo', 'pezzi') }}</small></h2>
+      <span class="spingi"></span>
+      {{ m.scarica("/reintegro/export", query|q, formati=("xlsx", "csv"), stampa="/reintegro/export.pdf?" ~ (query|q), etichetta_stampa="Stampa proposta") }}
+    </div>
+    <div class="tabella-scorre">
+    <table class="dati">
+      <thead><tr>
+        <th><input type="checkbox" checked data-tutti="chiave" aria-label="Seleziona tutto"></th><th><span class="solo-lettori">Foto</span></th><th>Prodotto</th>
+        <th class="num">Da prelevare</th><th>Scaffale</th>
+        {% if responsabile %}<th class="num">Venduto</th><th class="num">Già rimandato</th><th class="num">Disponibili a {{ D }}</th><th class="num">In arrivo</th><th class="num">Disponibili a {{ O }}</th><th>Perché questa quantità</th>
+        {% else %}<th>Nota</th>{% endif %}
+      </tr></thead>
+      <tbody>{% for r in da_fare %}
+        <tr>
+          <td><input type="checkbox" name="chiave" value="{{ r.chiave }}" data-pezzi="{{ r.quantita }}" checked aria-label="Includi {{ r.prodotto }}"></td>
+          <td>{{ m.foto(r.immagine) }}</td><td>{{ m.nome(r) }}{{ m.codici(r) }}</td>
+          <td class="num grande">{{ r.quantita }}</td><td class="scaffale">{{ r.ubicazione }}</td>
+          {% if responsabile %}
+          <td class="num">{{ r.venduto if par.modo == 'venduto' else '' }}</td><td class="num">{{ r.gia_coperto if par.modo == 'venduto' else '' }}</td>
+          <td class="num">{{ m.qta(r.disp_dest) }}</td><td class="num">{{ r.arrivo or '' }}</td><td class="num">{{ m.qta(r.disp_orig) }}</td>
+          <td class="piccolo">{{ r.proposta.vincoli|join('; ') or 'tutto quello che serve' }}</td>
+          {% else %}<td class="piccolo">{{ r.proposta.note|join('; ') }}</td>{% endif %}
+        </tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div class="barra-azioni">
+      <span class="nota">{% if responsabile %}La bozza si apre subito: la controlli e la approvi.{% else %}La bozza la approva il responsabile, poi si prepara.{% endif %}</span>
+      <span class="spingi"></span>
+      <button data-crea data-etichetta="Crea bozza">Crea bozza · {{ plurale(da_fare|length, 'riga', 'righe') }} · {{ plurale(da_fare|sum(attribute='quantita'), 'pezzo', 'pezzi') }}</button>
+    </div>
+  </form>
+  {% else %}
+  <div class="vuoto">Niente da mandare a {{ D }} con questi criteri{% if par.modo == 'venduto' %}: nessuna vendita da rimettere nel periodo, oppure è già stata rimessa con un trasferimento precedente{% endif %}.</div>
+  {% endif %}
+  {% if non_coperti and responsabile %}
+  <details class="scheda"><summary>{{ plurale(non_coperti|length, 'articolo', 'articoli') }} da rimettere ma senza pezzi disponibili a {{ O }}</summary>
+    <div class="tabella-scorre"><table class="semplice"><thead><tr><th>Prodotto</th><th class="num">Servirebbero</th><th>Motivo</th></tr></thead>
+    <tbody>{% for r in non_coperti %}<tr><td>{{ m.nome(r) }}{{ m.codici(r) }}</td><td class="num">{{ r.proposta.fabbisogno }}</td><td class="piccolo">{{ r.proposta.vincoli|join('; ') }}</td></tr>{% endfor %}</tbody></table></div>
+  </details>
+  {% endif %}
+{% endif %}
+{% endblock %}

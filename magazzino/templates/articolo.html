@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}
+{% block titolo %}{{ a.prodotto }}{% endblock %}
+{% block corpo %}
+<header class="titolo-articolo">
+  {{ m.foto(a.immagine) }}
+  <div><p class="sopratitolo"><a class="indietro" href="/inventario">Inventario</a></p>
+    <h1>{{ a.prodotto }}{% if a.variante %} <small>{{ a.variante }}</small>{% endif %}</h1>
+    <p>{{ m.codici(a) }}{% if responsabile and a.stato not in ('abbinato', 'EAN mancante') %}{{ m.associazione(a.stato) }}{% endif %}</p></div>
+</header>
+
+<section class="due-colonne">
+{% for x in per_negozio %}
+  <div class="scheda negozio-articolo">
+    <h2>{{ x.negozio.nome }}</h2>
+    {% if x.disp %}
+      <p class="grande-num">{{ m.qta(x.disp.disponibile) }} <small>disponibili{% if x.disp.giacenza is not none and x.disp.giacenza != x.disp.disponibile %} · {{ x.disp.giacenza }} in negozio{% endif %}</small></p>
+      <p class="scaffale-articolo">{% if x.ubicazione %}Scaffale <strong>{{ x.ubicazione }}</strong>{% else %}<span class="nota">Scaffale non indicato</span>{% endif %}</p>
+    {% else %}<p class="vuoto">Non esiste in questo negozio: non si può trasferire.</p>{% endif %}
+    <p class="nota">Scorta minima {{ x.soglia.minima }}, obiettivo {{ x.soglia.obiettivo }}{% if x.propria %} <span class="chip info">solo per questo articolo</span>{% else %} (quelle del negozio){% endif %}</p>
+    {% if responsabile %}
+    <details><summary>Cambia scorta e scaffale</summary>
+      <form method="post" action="/articolo/soglia" class="griglia-form">
+        {{ m.gettone_campo() }}<input type="hidden" name="chiave" value="{{ a.chiave }}"><input type="hidden" name="negozio" value="{{ x.negozio.id }}">
+        <label>Scorta minima <input type="number" min="0" inputmode="numeric" name="minima" value="{{ x.soglia.minima }}"></label>
+        <label>Obiettivo <input type="number" min="0" inputmode="numeric" name="obiettivo" value="{{ x.soglia.obiettivo }}"></label>
+        <label>Scaffale <input name="ubicazione" value="{{ x.ubicazione }}" maxlength="40" placeholder="es. B3-2"></label>
+        <button class="secondario">Salva</button>
+        {% if x.propria %}<button class="secondario" name="togli" value="1">Torna a quelle del negozio</button>{% endif %}
+      </form></details>
+    {% endif %}
+  </div>
+{% endfor %}
+</section>
+
+{% if righe_aperte %}
+<section class="scheda"><h2>In trasferimento</h2>
+  <ul class="elenco-stato">{% for r in righe_aperte %}<li><a href="/trasferimenti/{{ r.trasferimento_id }}">{{ r.codice }}</a> {{ nome_negozio[r.origine] }} → {{ nome_negozio[r.destinazione] }} · {{ m.stato_trasf(r.stato) }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% macro tabella_varianti(con_azioni) %}
+<div class="tabella-scorre">
+  <table class="semplice">
+    <thead><tr><th>Negozio Shopify</th><th>Prodotto</th><th>Codici</th><th class="num">Disponibili</th><th class="num">In negozio</th><th>Letto</th>{% if con_azioni %}<th></th>{% endif %}</tr></thead>
+    <tbody>{% for v in canali %}
+      <tr><td>{{ nomi_store[v.store] }}</td><td>{{ m.nome(v) }}</td><td>{{ m.codici(v) }}</td>
+        <td class="num">{{ m.qta(v.disponibile) }}</td><td class="num">{{ v.giacenza if v.giacenza is not none else '—' }}</td>
+        <td class="data">{{ quando(v.letto_il) }}</td>
+        {% if con_azioni %}<td>{% if v.manuale %}<form method="post" action="/associazioni" class="in-linea">{{ m.gettone_campo() }}
+          <input type="hidden" name="store" value="{{ v.store }}"><input type="hidden" name="variant_id" value="{{ v.variant_id }}">
+          <input type="hidden" name="chiave" value="{{ a.chiave }}"><input type="hidden" name="togli" value="1">
+          <span class="chip" title="{{ v.manuale }}">collegata a mano</span> <button class="link">scollega</button></form>{% endif %}</td>{% endif %}</tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{% if not responsabile %}
+<details class="scheda"><summary>Varianti sui negozi Shopify ({{ canali|length }})</summary>{{ tabella_varianti(false) }}</details>
+{% else %}
+<section class="scheda" id="associa">
+  <h2>Collegamento fra i negozi</h2>
+  {{ tabella_varianti(true) }}
+  {% set sg = suggerito %}
+  {% if sg %}
+  <div class="suggerimento">
+    <p><strong>Suggerito:</strong> {{ sg.verso.prodotto }}{% if sg.verso.variante %} · {{ sg.verso.variante }}{% endif %}
+      ha lo stesso SKU ({{ a.sku }}) su un altro negozio Shopify. Potrebbe essere lo stesso articolo.</p>
+    {% if sg.da.chiave == a.chiave %}
+      <a class="pulsante secondario piccolo" href="/articolo?{{ {'chiave': a.chiave, 'collega': sg.verso.chiave}|q }}#associa">Usa questo</a>
+    {% else %}
+      <a class="pulsante secondario piccolo" href="/articolo?{{ {'chiave': sg.da.chiave, 'collega': sg.verso.chiave}|q }}#associa">Apri l'altro e collega</a>
+      <span class="nota">si sposta la sua variante qui, perché ne ha meno</span>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% set pc = precompila %}
+  <details {{ 'open' if pc }}><summary>Collega a mano a un altro articolo</summary>
+    <p class="nota">Quando il codice a barre manca, è doppio o è diverso fra i negozi. Il collegamento resta registrato con il tuo nome e il motivo, e vince sull'abbinamento automatico.</p>
+    <form method="post" action="/associazioni" class="griglia-form">
+      {{ m.gettone_campo() }}<input type="hidden" name="chiave" value="{{ a.chiave }}">
+      {% set scelta = (pc.store ~ '|' ~ pc.variant_id) if pc else ((canali[0].store ~ '|' ~ canali[0].variant_id) if canali else '') %}
+      <label>Variante da spostare
+        <select name="store_variante" onchange="var p=this.value.split('|');this.form.store.value=p[0];this.form.variant_id.value=p[1]">
+          {% for v in canali %}{% set val = v.store ~ '|' ~ v.variant_id %}<option value="{{ val }}" {{ 'selected' if val == scelta }}>{{ nomi_store[v.store] }} · {{ v.sku or v.variant_id }}</option>{% endfor %}
+        </select></label>
+      <input type="hidden" name="store" value="{{ scelta.split('|')[0] }}"><input type="hidden" name="variant_id" value="{{ scelta.split('|')[1] if scelta }}">
+      <label>Articolo di destinazione (codice a barre o SKU) <input name="destinazione" required value="{{ pc.codice if pc }}"></label>
+      <label>Motivo <input name="motivo" required value="{{ pc.motivo if pc }}" placeholder="es. stesso articolo, codice a barre sbagliato su Shopify"></label>
+      <button class="secondario">Collega</button>
+    </form>
+    {% if pc and pc.altre %}<p class="nota">Questo articolo ha altre {{ pc.altre }} varianti da spostare: ripeti per ciascuna.</p>{% endif %}
+  </details>
+</section>
+
+<section class="scheda" id="anomalie">
+  <h2>Anomalie</h2>
+  {% if anomalie %}<ul class="anomalie compatte">{% for x in anomalie %}
+    <li class="grav-{{ x.gravita }}"><span class="tipo">{{ TIPI_ANOMALIA.get(x.tipo, x.tipo) }}</span> {{ x.titolo }} <small>({{ x.stato }})</small><br><small>{{ x.dettaglio }}</small></li>{% endfor %}</ul>
+  {% else %}<p class="vuoto">Nessuna.</p>{% endif %}
+</section>
+
+<section class="scheda" id="rettifiche">
+  <h2>Rettifica della giacenza</h2>
+  {% if not rettifiche_attive %}
+    <p class="avviso info">Rettifiche spente sui negozi veri (servono <code>SCRITTURE_SHOPIFY=1</code> e <code>RETTIFICHE=1</code> nel .env). Il programma confronta e segnala; le correzioni si fanno a mano su Shopify.</p>
+  {% else %}
+    {% for r in rettifiche if r.stato == 'da_confermare' %}
+    <div class="conferma">
+      <p><strong>Da confermare:</strong> {{ FONTI[r.fonte] }}, {{ r.contati }} pezzi a {{ nome_negozio[r.negozio] }} — «{{ r.motivo }}» (chiesta da {{ r.richiesta_da }})</p>
+      <table class="semplice"><thead><tr><th>Negozio Shopify</th><th class="num">Giacenza ora</th><th class="num">Dopo</th><th class="num">Movimento</th></tr></thead>
+        <tbody>{% for x in r.anteprima|fromjson %}<tr><td>{{ nomi_store[x.store] }}</td><td class="num">{{ x.giacenza }}</td><td class="num">{{ x.dopo }}</td><td class="num"><strong>{{ '%+d'|format(x.delta) }}</strong></td></tr>{% endfor %}</tbody></table>
+      <form method="post" action="/rettifiche" class="in-linea">{{ m.gettone_campo() }}
+        <input type="hidden" name="chiave" value="{{ a.chiave }}"><input type="hidden" name="rettifica_id" value="{{ r.id }}">
+        <button name="decisione" value="conferma">Conferma e scrivi su Shopify</button>
+        <button name="decisione" value="rifiuta" class="secondario">Rifiuta</button></form>
+    </div>
+    {% endfor %}
+    <form method="post" action="/rettifiche" class="griglia-form">
+      {{ m.gettone_campo() }}<input type="hidden" name="chiave" value="{{ a.chiave }}">
+      <label>Negozio <select name="negozio">{% for x in per_negozio if x.disp %}<option value="{{ x.negozio.id }}">{{ x.negozio.nome }}</option>{% endfor %}</select></label>
+      <label>Fonte di riferimento <select name="fonte">{% for k, v in FONTI.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+      <label>Pezzi contati <input type="number" min="0" inputmode="numeric" name="contati" placeholder="es. 4"></label>
+      <label>Motivo <input name="motivo" required placeholder="es. inventario del 25/09"></label>
+      <button class="secondario">Controlla prima di confermare</button>
+    </form>
+    <p class="nota">La giacenza si rilegge da Shopify per l'anteprima e di nuovo alla conferma: se nel frattempo è cambiata, la rettifica si annulla e va rifatta.</p>
+  {% endif %}
+  {% if rettifiche %}<details><summary>Rettifiche precedenti</summary><ul>{% for r in rettifiche %}<li>{{ locale(r.richiesta_il) }} · {{ FONTI[r.fonte] }} · {{ r.contati }} · {{ r.stato }}{% if r.confermata_da %} ({{ r.confermata_da }}){% endif %} — {{ r.motivo }}</li>{% endfor %}</ul></details>{% endif %}
+</section>
+{% endif %}
+{% endblock %}

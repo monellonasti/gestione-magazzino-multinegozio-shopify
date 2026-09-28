@@ -1,0 +1,56 @@
+{% import "_macro.html" as m with context %}{% import "_icone.html" as ic %}<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{% block titolo %}Magazzino{% endblock %} · Magazzino</title>
+<link rel="stylesheet" href="/static/stile.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body class="{% if demo %}con-demo{% endif %}{% if u %} ruolo-{{ u.ruolo }}{% endif %} {% block classe %}{% endblock %}">
+{% if demo %}<div class="fascia-demo"><strong>DEMO</strong> dati inventati, nessun collegamento ai negozi veri{% if responsabile %} · <a href="/impostazioni#demo">ripristina o simula guasti</a>{% endif %}</div>{% endif %}
+{% if u %}
+<div class="struttura">
+  <nav class="menu" aria-label="Sezioni">
+    <a class="marchio" href="/">Magazzino<span>{{ negozi[0].nome }} · {{ negozi[1].nome }}</span></a>
+    {% for v in menu %}
+      <a href="{{ v.url }}" class="{{ 'attivo' if v.attivo }}"{% if v.attivo %} aria-current="page"{% endif %}>{{ ic.icona(v.icona) }}{{ v.nome }}
+        {%- if v.conteggio %}<span class="conteggio{{ ' grave' if v.grave }}" title="{{ 'anomalie gravi' if v.grave else 'cose da fare' }}">{{ v.conteggio }}</span>{% endif %}</a>
+    {% endfor %}
+    {% if menu_extra %}<span class="menu-separatore" aria-hidden="true"></span>
+      {% for v in menu_extra %}<a href="{{ v.url }}" class="secondaria {{ 'attivo' if v.attivo }}"{% if v.attivo %} aria-current="page"{% endif %}>{{ ic.icona(v.icona) }}{{ v.nome }}</a>{% endfor %}
+    {% endif %}
+    <div class="chi">
+      <span>{{ u.nome }}</span><small>{{ u.ruolo }}</small>
+      <form method="post" action="/esci"><button class="link">Esci</button></form>
+    </div>
+  </nav>
+  <main>
+    <header class="barra-sync {{ 'problemi' if sync.problemi }}" {% if sync.in_corso %}data-sync-in-corso{% endif %}>
+      <form class="cerca-rapida" method="get" action="/cerca" role="search">
+        <label><span class="solo-lettori">Cerca o spara un codice</span>
+          <input name="q" placeholder="Cerca o spara un codice…" autocomplete="off" data-lettore-globale enterkeyhint="search"></label>
+      </form>
+      <div class="negozi-sync">
+        {% set tipo_s, testo_s, corto_s = sync.riassunto %}
+        <span class="pill {{ tipo_s }}" title="{% for s in sync.negozi %}{{ s.nome }}: {{ locale(s.ultimo_ok, '%d/%m %H:%M') or 'mai letto' }}{% if s.errore %} (errore: {{ s.errore }}){% endif %}&#10;{% endfor %}"><span class="testo-lungo">{{ testo_s }}</span><span class="testo-corto">{{ corto_s }}</span></span>
+        {% if responsabile and sync.problemi %}<a class="piccolo" href="/impostazioni#collegamento">dettagli</a>{% endif %}
+      </div>
+      <form method="post" action="/sincronizza" class="in-linea">
+        {{ m.gettone_campo() }}<input type="hidden" name="torna" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+        <span class="stato-sync" id="stato-sync" role="status">{% if sync.in_corso %}Lettura in corso: {{ sync.messaggio }}{% endif %}</span>
+        <button class="secondario piccolo" {% if sync.in_corso %}disabled{% endif %}>Rileggi i negozi</button>
+      </form>
+    </header>
+    {% if errore_config %}<div class="avviso errore"><strong>Il programma non è collegato ai negozi.</strong>
+      {% if responsabile %}{{ errore_config }}. Controlla il file .env (vedi docs/TECNICO.md), poi riavvia il programma.{% else %}Avvisa il responsabile.{% endif %}</div>{% endif %}
+    {% if msg and not msg_altrove %}<div class="avviso {{ tipo_msg }}" role="{{ 'alert' if tipo_msg == 'errore' else 'status' }}">{{ msg }}</div>{% endif %}
+    {% if errore %}<div class="avviso errore" role="alert"><strong>{{ errore }}</strong>{% if dettagli %}<ul>{% for d in dettagli %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}</div>{% endif %}
+    {% block corpo %}{% endblock %}
+  </main>
+</div>
+{% else %}
+{% block pubblica %}{% endblock %}
+{% endif %}
+</body>
+</html>

@@ -1,0 +1,8 @@
+.venv/
+dati/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+negozi.json
+.portfolio/

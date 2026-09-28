@@ -1,0 +1,44 @@
+{% macro gettone_campo() %}<input type="hidden" name="gettone" value="{{ gettone() }}">{% endmacro %}
+
+{% macro foto(src, alt="") %}{% if src %}<img class="foto" src="{{ src }}" alt="{{ alt }}" loading="lazy">{% else %}<span class="foto vuota" aria-hidden="true"></span>{% endif %}{% endmacro %}
+
+{% macro nome(r) %}<span class="nome-prodotto">{{ r.prodotto }}</span>{% if r.variante %}<span class="variante">{{ r.variante }}</span>{% endif %}{% endmacro %}
+
+{% macro codici(r) %}<span class="codici">{% if r.sku %}<span>SKU {{ r.sku }}</span>{% endif %}{% if r.ean %}<span>EAN {{ r.ean }}</span>{% else %}<span class="manca">Senza codice a barre</span>{% endif %}</span>{% endmacro %}
+
+{% macro qta(v) %}{% if v is none %}<span class="assente" title="non esiste in questo negozio">—</span>{% elif v < 0 %}<span class="neg">{{ v }}</span>{% elif v == 0 %}<span class="zero">0</span>{% else %}{{ v }}{% endif %}{% endmacro %}
+
+{% macro stato_trasf(s) %}<span class="stato st-{{ s }}">{{ STATI[s] }}</span>{% endmacro %}
+
+{#- collegamento fra i negozi, in parole semplici -#}
+{% macro associazione(s) -%}
+{%- if s == 'abbinato' %}<span class="assoc ok">Collegato</span>
+{%- elif s == 'manuale' %}<span class="assoc ok">Collegato a mano</span>
+{%- elif s.startswith('solo ') %}<span class="assoc info">Solo a {{ s[5:] }}</span>
+{%- elif s == 'EAN mancante' %}<span class="chip att">Senza codice a barre</span>
+{%- elif s == 'EAN doppio' %}<span class="assoc ko">Codice a barre doppio</span>
+{%- elif s == 'ambiguo' %}<span class="assoc ko">Da collegare a mano</span>
+{%- else %}<span class="assoc ko">{{ s }}</span>{% endif -%}
+{%- endmacro %}
+
+{#- quantità con − e + (tablet); senza JavaScript il campo resta scrivibile -#}
+{% macro passo_qta(nome, valore, massimo=none, minimo=0, etichetta="Quantità") -%}
+<span class="passo-qta"><button type="button" class="secondario" data-passo="-1" aria-label="Uno in meno" tabindex="-1">−</button><input class="qta" type="number" inputmode="numeric" name="{{ nome }}" value="{{ valore }}" min="{{ minimo }}"{% if massimo is not none %} max="{{ massimo }}"{% endif %} aria-label="{{ etichetta }}"><button type="button" class="secondario" data-passo="1" aria-label="Uno in più" tabindex="-1">+</button></span>
+{%- endmacro %}
+
+{#- «Scarica»: stampa ed esportazioni in un solo menu -#}
+{% macro scarica(base, query="", formati=("pdf", "xlsx", "csv"), stampa=none, etichetta_stampa="Stampa", a_destra=true) %}
+{% import "_icone.html" as ic %}
+{% set nomi = {"pdf": "PDF", "xlsx": "Excel", "csv": "CSV"} %}
+<details class="tendina{{ ' a-destra' if a_destra }}"><summary class="pulsante secondario piccolo">{{ ic.icona("scarica", "icona-s") }} Scarica</summary>
+  <div class="elenco">
+    {% if stampa %}<a href="{{ stampa }}" target="_blank">{{ ic.icona("stampa", "icona-s") }} {{ etichetta_stampa }}</a>{% endif %}
+    {% for f in formati %}<a href="{{ base }}.{{ f }}{{ '?' ~ query if query }}">{{ nomi[f] }}</a>{% endfor %}
+  </div></details>
+{% endmacro %}
+
+{% macro pagine(pagina, pagine, base) %}{% if pagine > 1 %}<nav class="paginazione" aria-label="Pagine">
+  {% if pagina > 1 %}<a href="{{ base }}&pagina={{ pagina - 1 }}">‹ Precedente</a>{% endif %}
+  <span>Pagina {{ pagina }} di {{ pagine }}</span>
+  {% if pagina < pagine %}<a href="{{ base }}&pagina={{ pagina + 1 }}">Successiva ›</a>{% endif %}
+</nav>{% endif %}{% endmacro %}

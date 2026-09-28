@@ -1,0 +1,44 @@
+{
+  "_nota": "Copia questo file in negozi.json (resta fuori da git) e metti i negozi veri. Servono due negozi fisici; ognuno ha un canale principale (il negozio Shopify da cui si leggono le giacenze) e, se serve, canali specchio che vendono la stessa merce. 'sede' e' il nome della location su Shopify; 'domini' sono i domini myshopify accettati (il primo e' quello ufficiale). Le credenziali NON vanno qui: per ogni 'store' il .env indica il file con le credenziali, nella riga ENV_<STORE> (per esempio ENV_A_CASSA).",
+  "negozi": [
+    {
+      "id": "a",
+      "nome": "Negozio A",
+      "canali": [
+        {
+          "store": "a_cassa",
+          "nome": "Negozio A (cassa)",
+          "sede": "Sede A",
+          "principale": true,
+          "domini": [
+            "negozio-a.myshopify.com"
+          ]
+        },
+        {
+          "store": "a_online",
+          "nome": "Negozio A online",
+          "sede": "Sede A",
+          "principale": false,
+          "domini": [
+            "negozio-a-online.myshopify.com"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "b",
+      "nome": "Negozio B",
+      "canali": [
+        {
+          "store": "b_cassa",
+          "nome": "Negozio B",
+          "sede": "Sede B",
+          "principale": true,
+          "domini": [
+            "negozio-b.myshopify.com"
+          ]
+        }
+      ]
+    }
+  ]
+}

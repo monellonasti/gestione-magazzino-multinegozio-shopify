@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}
+{% block titolo %}Inventario{% endblock %}
+{% block corpo %}
+{% set A, B = negozi[0], negozi[1] %}
+<header class="testata">
+  <div><h1>Inventario</h1></div>
+  {% if totale %}<div class="azioni">{{ m.scarica("/inventario/export", filtri|q, formati=("xlsx", "csv")) }}</div>{% endif %}
+</header>
+<form class="filtri" method="get" action="/inventario" id="form-cerca">
+  <label class="cerca">Cerca o spara il codice
+    <input name="q" value="{{ filtri.q }}" data-scanner autofocus autocomplete="off" inputmode="search" placeholder="Nome, SKU o codice a barre">
+  </label>
+  <label>Negozio
+    <select name="negozio"><option value="">Tutti e due</option>
+      {% for n in negozi %}<option value="{{ n.id }}" {{ 'selected' if filtri.negozio == n.id }}>{{ n.nome }}</option>{% endfor %}
+    </select></label>
+  <label>Mostra
+    <select name="filtro">
+      {% for v, t in [("", "Tutti"), ("disponibili", "Disponibili"), ("esauriti", "Esauriti"), ("sotto_scorta", "Sotto la scorta minima"), ("in_trasferimento", "In viaggio o prenotati"), ("solo_uno", "Solo in un negozio")] + ([("anomalie", "Con anomalie")] if responsabile else []) %}
+      <option value="{{ v }}" {{ 'selected' if filtri.filtro == v }}>{{ t }}</option>{% endfor %}
+    </select></label>
+  <button>Cerca</button>
+  {% if filtri.q or filtri.negozio or filtri.filtro %}<a class="pulsante secondario" href="/inventario">Azzera</a>{% endif %}
+</form>
+
+{% if righe %}
+<p class="riga-azioni nota">{{ plurale(totale, 'articolo', 'articoli') }} · i numeri sono i pezzi disponibili, cioè non ancora promessi a ordini · «—»: l'articolo non esiste in quel negozio</p>
+<div class="tabella-scorre">
+<table class="dati inventario a-schede">
+  <thead><tr>
+    <th><span class="solo-lettori">Foto</span></th><th>Prodotto</th>
+    <th class="num">{{ A.nome }}</th><th class="num">{{ B.nome }}</th>
+    <th class="num">In viaggio</th>{% if responsabile %}<th>Collegamento</th>{% endif %}
+  </tr></thead>
+  <tbody>
+  {% for r in righe %}
+    <tr>
+      <td class="in-riga">{{ m.foto(r.immagine) }}</td>
+      <td class="in-riga largo"><a href="/articolo?chiave={{ r.chiave|urlencode }}">{{ m.nome(r) }}</a>{{ m.codici(r) }}
+        {%- if responsabile and r.n_anomalie %}<a class="badge-anomalia" href="/articolo?chiave={{ r.chiave|urlencode }}#anomalie">{{ plurale(r.n_anomalie, 'anomalia', 'anomalie') }}</a>{% endif %}
+        {%- if responsabile and r.vecchia %}<small class="dato-vecchio">dati {{ quando(r.aggiornato_il) }}</small>{% endif %}</td>
+      <td class="num grande in-riga" data-et="{{ A.nome }}">{{ m.qta(r.disp_a) }}{% if r.ubi_a %}<small class="scaffale-qui">{{ r.ubi_a }}</small>{% endif %}</td>
+      <td class="num grande in-riga" data-et="{{ B.nome }}">{{ m.qta(r.disp_b) }}{% if r.ubi_b %}<small class="scaffale-qui">{{ r.ubi_b }}</small>{% endif %}</td>
+      <td class="num in-riga{{ ' vuota' if not r.prenotati and not r.in_viaggio }}" data-et="In viaggio">
+        {%- if r.in_viaggio %}<span title="spediti, non ancora ricevuti">{{ r.in_viaggio }} in viaggio</span>{% endif %}
+        {%- if r.prenotati %}<small title="approvati, non ancora spediti">{{ r.prenotati }} prenotati</small>{% endif %}
+        {%- if not r.prenotati and not r.in_viaggio %}<span class="zero">—</span>{% endif %}</td>
+      {% if responsabile %}<td>{% if r.stato not in ('abbinato', 'EAN mancante') %}{{ m.associazione(r.stato) }}{% endif %}</td>{% endif %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{{ m.pagine(pagina, pagine, '/inventario?' ~ (filtri|q)) }}
+{% else %}
+<div class="vuoto">
+  {% if filtri.q and cercato_codice %}Nessun articolo con il codice {{ filtri.q }}. Cercalo per nome: se lo trovi, il suo codice a barre manca su Shopify{% if responsabile %} (vedi le <a href="/anomalie?tipo=ean_mancante">anomalie</a>){% else %} (avvisa il responsabile){% endif %}.
+  {% elif filtri.q %}Nessun articolo per «{{ filtri.q }}».
+  {% elif not sync.negozi|selectattr('ultimo_ok')|list %}Nessun dato ancora: premi <strong>Rileggi i negozi</strong> in alto.
+  {% else %}Nessun articolo con questi filtri.{% endif %}
+</div>
+{% endif %}
+{% endblock %}

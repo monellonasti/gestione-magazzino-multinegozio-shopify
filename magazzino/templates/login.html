@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block titolo %}Accesso{% endblock %}
+{% block classe %}pagina-login{% endblock %}
+{% block pubblica %}
+<main class="login">
+  <h1>Magazzino</h1>
+  <p class="sotto">{{ negozi[0].nome }} · {{ negozi[1].nome }}</p>
+  {% if errore %}<div class="avviso errore" role="alert">{{ errore }}</div>{% endif %}
+  {% if msg %}<div class="avviso {{ tipo_msg }}">{{ msg }}</div>{% endif %}
+  <form method="post" action="/login" class="scheda">
+    <input type="hidden" name="dopo" value="{{ dopo }}">
+    <label>Nome utente <input name="username" autocomplete="username" required autofocus></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <button>Entra</button>
+  </form>
+  {% if utenti_demo %}
+  <div class="scheda demo-accessi">
+    <strong>Accessi della demo</strong> (password <code>{{ password_demo }}</code>)
+    <ul>{% for user, nome, ruolo in utenti_demo %}<li><code>{{ user }}</code> — {{ nome }}</li>{% endfor %}</ul>
+    <p>Il magazziniere vede solo le liste operative; il responsabile approva, configura e gestisce le anomalie.</p>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

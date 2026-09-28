@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}
+{% block titolo %}Impostazioni{% endblock %}
+{% block corpo %}
+<header class="testata"><div><h1>Impostazioni</h1></div></header>
+<nav class="schede-filtro" aria-label="Sezioni">
+  <a href="#scorte">Scorte</a><a href="#collegamento">Collegamento ai negozi</a><a href="#shopify">Movimenti fatti su Shopify</a>
+  <a href="#utenti">Utenti</a>{% if demo %}<a href="#demo">Demo</a>{% endif %}
+</nav>
+
+<section class="scheda" id="scorte">
+  <h2>Scorte dei negozi</h2>
+  <p class="nota">Valgono per tutti gli articoli di un negozio, tranne quelli con una scorta propria (si cambia dalla scheda dell'articolo).
+    <strong>Scorta minima</strong>: sotto questa si propone un reintegro o un bilanciamento, e l'origine non ci scende mai.
+    <strong>Obiettivo</strong>: dove si riporta il negozio quando si interviene.</p>
+  <form method="post" action="/impostazioni/soglie" class="griglia-form">
+    {{ m.gettone_campo() }}
+    {% for n in negozi %}
+      <fieldset><legend>{{ n.nome }}</legend>
+        <label>Scorta minima <input type="number" min="0" inputmode="numeric" name="minima_{{ n.id }}" value="{{ soglie_neg[n.id].minima }}"></label>
+        <label>Obiettivo <input type="number" min="0" inputmode="numeric" name="obiettivo_{{ n.id }}" value="{{ soglie_neg[n.id].obiettivo }}"></label></fieldset>
+    {% endfor %}
+    <label>Pezzo dispari nel bilanciamento: resta a
+      <select name="priorita">{% for n in negozi %}<option value="{{ n.id }}" {{ 'selected' if priorita == n.id }}>{{ n.nome }}</option>{% endfor %}</select></label>
+    <button>Salva</button>
+  </form>
+  {% if soglie_articolo %}
+  <details><summary>{{ plurale(soglie_articolo|length, 'articolo con scorta propria', 'articoli con scorta propria') }}</summary>
+    <div class="tabella-scorre"><table class="semplice"><thead><tr><th>Articolo</th><th>Negozio</th><th class="num">Minima</th><th class="num">Obiettivo</th><th>Da</th></tr></thead>
+    <tbody>{% for s in soglie_articolo %}<tr><td><a href="/articolo?chiave={{ s.chiave|urlencode }}">{{ s.prodotto or s.chiave }} {{ s.variante or '' }}</a></td>
+      <td>{{ nome_negozio[s.negozio] }}</td><td class="num">{{ s.minima }}</td><td class="num">{{ s.obiettivo }}</td><td>{{ s.modificata_da }}</td></tr>{% endfor %}</tbody></table></div>
+  </details>{% endif %}
+</section>
+
+<section class="scheda" id="collegamento">
+  <h2>Collegamento ai negozi</h2>
+  <ul class="elenco-stato">
+    <li>Modalità: <strong>{{ 'DEMO (negozi finti)' if demo else 'reale' }}</strong></li>
+    <li>Scritture sulle giacenze Shopify: <strong>{{ 'attive' if scritture else 'disattivate' }}</strong>{% if not demo and not scritture %} — per accenderle: <code>SCRITTURE_SHOPIFY=1</code> nel .env e riavvio{% endif %}</li>
+    <li>Rettifiche: <strong>{{ 'attive' if rettifiche_attive else 'disattivate' }}</strong></li>
+    <li>Lettura automatica ogni {{ plurale(cfg.sync_minuti, 'minuto', 'minuti') }}</li>
+  </ul>
+  <div class="tabella-scorre"><table class="semplice">
+    <thead><tr><th>Negozio fisico</th><th>Negozio Shopify</th><th>Ruolo</th><th>Ultima lettura riuscita</th><th>Stato</th><th>Dominio e sede</th></tr></thead>
+    <tbody>{% for n in negozi %}{% for ch in n.canali %}{% set x = sync.negozi|selectattr('store', 'equalto', ch.store)|first %}
+      <tr><td>{{ n.nome }}</td><td>{{ nomi_store[ch.store] }}</td><td>{{ 'negozio di riferimento' if ch.principale else 'gemello (stessa merce)' }}</td>
+        <td class="data">{{ quando(x.ultimo_ok) if x and x.ultimo_ok else 'mai' }}</td>
+        <td>{% if x and x.errore %}<span class="pill rosso" title="{{ x.errore }}">errore</span><small class="blocco">{{ x.errore }}</small>
+            {% elif x and x.vecchio %}<span class="pill giallo">dati vecchi</span>{% else %}<span class="pill verde">a posto</span>{% endif %}</td>
+        <td><code>{{ topo.domini[ch.store][0] }}</code><small class="blocco">{{ ch.sede }}{% if sedi.get(ch.store) %} ({{ sedi[ch.store].location_id.split('/')[-1] }}){% endif %}</small></td></tr>
+    {% endfor %}{% endfor %}</tbody>
+  </table></div>
+  <p class="nota">Le credenziali stanno nei .env dei negozi e restano sul server: qui non si vedono e non arrivano mai al browser.</p>
+  {% if not demo %}
+  <form method="post" action="/impostazioni/permessi" class="in-linea">{{ m.gettone_campo() }}<button class="secondario">Verifica i permessi delle app</button></form>
+  {% if permessi %}<p>Verifica {{ quando(permessi.il) }}:</p><ul>{% for s, e in permessi.esito.items() %}
+    <li>{{ nomi_store[s] }}: {% if e.errore %}<span class="pill rosso">{{ e.errore }}</span>{% elif e.mancano %}<span class="pill giallo">mancano {{ e.mancano|join(', ') }}</span>{% else %}<span class="pill verde">tutto presente</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+  {% endif %}
+  <details><summary>Ultime letture dei negozi</summary>
+    <div class="tabella-scorre"><table class="semplice"><thead><tr><th>Inizio</th><th>Negozio Shopify</th><th>Cosa</th><th>Esito</th><th class="num">Righe</th><th>Messaggio</th></tr></thead>
+    <tbody>{% for s in sincronizzazioni %}<tr><td class="data">{{ locale(s.inizio, '%d/%m %H:%M') }}</td><td>{{ nomi_store[s.store] }}</td><td>{{ s.tipo }}</td>
+      <td><span class="pill {{ 'verde' if s.esito == 'ok' else ('rosso' if s.esito == 'errore' else 'giallo') }}">{{ s.esito }}</span></td><td class="num">{{ s.righe }}</td><td><small>{{ s.messaggio or '' }}</small></td></tr>{% endfor %}</tbody></table></div>
+  </details>
+</section>
+
+<section class="scheda" id="shopify">
+  <h2>Movimenti fatti su Shopify</h2>
+  <p class="nota">Il programma cerca le uscite senza destinazione e gli arrivi dal fornitore registrati su Shopify a partire da questa data.
+    Quelli precedenti sono già stati sistemati fuori dal programma{% if not demo %} (per esempio quelli caricati con gli script prima del primo giorno d'uso){% endif %}:
+    se sposti la data indietro, ricompaiono e vanno segnati come «già sistemati fuori dal programma».</p>
+  <form method="post" action="/impostazioni/shopify_dal" class="griglia-form">
+    {{ m.gettone_campo() }}
+    <label>Considera quelli dal <input type="date" name="dal" value="{{ shopify_dal or '' }}" required></label>
+    <button class="secondario">Salva</button>
+  </form>
+</section>
+
+<section class="scheda" id="utenti">
+  <h2>Utenti</h2>
+  <div class="tabella-scorre"><table class="semplice"><thead><tr><th>Utente</th><th>Nome</th><th>Ruolo</th><th>Stato</th><th></th></tr></thead>
+  <tbody>{% for x in utenti %}<tr><td><code>{{ x.username }}</code></td><td>{{ x.nome }}</td><td>{{ x.ruolo }}</td><td>{{ 'attivo' if x.attivo else 'disattivato' }}</td>
+    <td>{% if x.attivo and x.username != u.username %}<form method="post" action="/impostazioni/disattiva" class="in-linea" data-conferma="Disattivare {{ x.username }}?">{{ m.gettone_campo() }}<input type="hidden" name="username" value="{{ x.username }}"><button class="link">disattiva</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+  <form method="post" action="/impostazioni/utente" class="griglia-form">
+    {{ m.gettone_campo() }}
+    <label>Utente <input name="username" required autocomplete="off"></label>
+    <label>Nome <input name="nome" required></label>
+    <label>Ruolo <select name="ruolo"><option value="magazziniere">magazziniere</option><option value="responsabile">responsabile</option></select></label>
+    <label>Password (almeno 8 caratteri) <input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+    <button class="secondario">Crea o aggiorna</button>
+  </form>
+</section>
+
+{% if demo %}
+<section class="scheda" id="demo">
+  <h2>Demo</h2>
+  <form method="post" action="/impostazioni/demo" class="griglia-form">
+    {{ m.gettone_campo() }}
+    <label class="spunta"><input type="checkbox" name="demo_errore_sync" value="1" {{ 'checked' if demo_stato.demo_errore_sync }}> «Centro online» non risponde alla lettura</label>
+    <label>Prossimi aggiornamenti senza risposta da Shopify <input type="number" min="0" max="20" name="demo_incerte" value="{{ demo_stato.demo_incerte or 0 }}"></label>
+    <label class="spunta"><input type="checkbox" name="demo_vendita" value="1" {{ 'checked' if demo_stato.demo_vendita }}> Una vendita arriva durante il prossimo aggiornamento</label>
+    <button class="secondario">Applica</button>
+  </form>
+  <form method="post" action="/impostazioni/ripristina" data-conferma="Ripristinare la demo? Tutto torna ai dati iniziali.">{{ m.gettone_campo() }}<button class="pericolo">Ripristina la demo</button></form>
+</section>
+{% endif %}
+{% endblock %}

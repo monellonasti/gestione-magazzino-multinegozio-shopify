@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}
+{% block titolo %}Bilanciamento{% endblock %}
+{% block corpo %}
+<header class="testata"><div><h1>Reintegro</h1></div></header>
+<nav class="linguette" aria-label="Reintegro">
+  <a href="/reintegro">Lista di reintegro</a>
+  <a class="attivo" aria-current="page" href="/bilanciamento">Bilanciamento</a>
+</nav>
+<div class="spiegazione">
+  <p class="nota">Proposte basate solo sulle scorte minime e obiettivo dei negozi, non sulle vendite.</p>
+  <details class="in-linea"><summary>Come funziona</summary>
+    <ul class="nota">
+      <li>Scatta quando un negozio, contando quello che gli sta già arrivando, è sotto la sua scorta minima.</li>
+      <li>L'origine non scende mai sotto la propria minima e non resta con meno pezzi della destinazione, così la merce non torna indietro.</li>
+      <li>Scorte dei negozi: {% for n in negozi %}{{ n.nome }} minima {{ soglie_neg[n.id].minima }}, obiettivo {{ soglie_neg[n.id].obiettivo }}{% if not loop.last %}; {% endif %}{% endfor %}.
+        {% if priorita %}Il pezzo dispari resta a {{ nome_negozio[priorita] }}.{% endif %}
+        {% if responsabile %}<a href="/impostazioni">Cambia</a>{% endif %}</li>
+    </ul></details>
+</div>
+<form class="filtri" method="get" action="/bilanciamento">
+  <input type="hidden" name="calcola" value="1">
+  <label class="cerca">Solo articoli che contengono <input name="q" value="{{ q }}" placeholder="nome, SKU o codice a barre"></label>
+  <button>Calcola le proposte</button>
+</form>
+
+{% if calcolato %}
+  {% if gruppi %}
+  {% set tutte = gruppi.values()|sum(start=[]) %}
+  <form method="post" action="/bilanciamento/crea" data-conta-selezione>
+    {{ m.gettone_campo() }}<input type="hidden" name="q" value="{{ q }}">
+    <div class="riga-azioni"><span class="spingi"></span>
+      {{ m.scarica("/bilanciamento/export", {'q': q}|q, formati=("xlsx", "csv"), stampa="/bilanciamento/export.pdf?" ~ ({'q': q}|q), etichetta_stampa="Stampa proposta") }}</div>
+    {% for (o, d), righe in gruppi.items() %}
+    <h2>{{ nome_negozio[o] }} → {{ nome_negozio[d] }} <small>{{ plurale(righe|length, 'articolo', 'articoli') }} · {{ plurale(righe|sum(attribute='quantita'), 'pezzo', 'pezzi') }}</small></h2>
+    <div class="tabella-scorre">
+    <table class="dati">
+      <thead><tr><th><input type="checkbox" checked data-tutti="chiave" aria-label="Seleziona tutto"></th><th><span class="solo-lettori">Foto</span></th><th>Prodotto</th>
+        <th class="num">Da spostare</th><th>Scaffale</th><th class="num">{{ nome_negozio[o] }}<small>prima → dopo</small></th><th class="num">{{ nome_negozio[d] }}<small>prima → dopo</small></th><th>Perché</th></tr></thead>
+      <tbody>{% for r in righe %}
+        <tr><td><input type="checkbox" name="chiave" value="{{ r.chiave }}" data-pezzi="{{ r.quantita }}" checked aria-label="Includi {{ r.prodotto }}"></td>
+          <td>{{ m.foto(r.immagine) }}</td><td>{{ m.nome(r) }}{{ m.codici(r) }}</td>
+          <td class="num grande">{{ r.quantita }}</td><td class="scaffale">{{ r.ubicazione }}</td>
+          <td class="num">{{ r.prima_o }} → {{ r.dopo_o }}</td><td class="num">{{ m.qta(r.prima_d) }} → {{ r.dopo_d }}</td>
+          <td class="piccolo">{{ r.proposta.vincoli|join('; ') }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endfor %}
+    <div class="barra-azioni">
+      <span class="nota">Una bozza per direzione. {% if responsabile %}Poi le approvi.{% else %}Le approva il responsabile.{% endif %}</span>
+      <span class="spingi"></span>
+      <button data-crea data-etichetta="Crea bozze">Crea bozze · {{ plurale(tutte|length, 'riga', 'righe') }} · {{ plurale(tutte|sum(attribute='quantita'), 'pezzo', 'pezzi') }}</button>
+    </div>
+  </form>
+  {% else %}
+  <div class="vuoto">Nessuna proposta: nessun negozio è sotto la minima per articoli che l'altro può cedere, oppure ci sono già trasferimenti aperti che li coprono.</div>
+  {% endif %}
+{% endif %}
+{% endblock %}

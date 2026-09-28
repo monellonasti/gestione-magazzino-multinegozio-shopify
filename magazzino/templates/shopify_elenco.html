@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}
+{% block titolo %}Movimenti fatti su Shopify{% endblock %}
+{% block corpo %}
+<header class="testata">
+  <div><h1>Trasferimenti</h1></div>
+</header>
+<nav class="linguette" aria-label="Trasferimenti">
+  <a href="/trasferimenti">Fra negozi</a>
+  <a class="attivo" aria-current="page" href="/trasferimenti/shopify">Fatti su Shopify{% if conteggi.da_destinare %} <span class="conteggio">{{ conteggi.da_destinare }}</span>{% endif %}</a>
+</nav>
+<p class="nota">Uscite senza destinazione e arrivi dal fornitore registrati a mano su un solo negozio Shopify: qui decidi dove va la merce.
+  {%- if dal %} Si considerano quelli dal {{ giorno(dal) }}.{% endif %}</p>
+<nav class="schede-filtro" aria-label="Filtra">
+  {% for v, nome in [("da_destinare", "Da sistemare"), ("decisi", "Già decisi"), ("altri", "Non partiti o annullati")] %}
+  <a href="/trasferimenti/shopify{{ '?vista=' ~ v if v != 'da_destinare' }}" class="{{ 'attivo' if vista == v }}"{% if vista == v %} aria-current="page"{% endif %}>{{ nome }} ({{ conteggi[v] }})</a>{% endfor %}
+</nav>
+{% if righe %}
+<div class="tabella-scorre">
+<table class="dati elenco-trasf a-schede">
+  <thead><tr><th>Movimento</th><th>Negozio</th><th class="num">Pezzi</th>
+    <th>{{ 'Suggerimento' if vista == 'da_destinare' else 'Com\'è stato deciso' }}</th><th></th></tr></thead>
+  <tbody>{% for ts in righe %}
+    <tr>
+      <td><strong>{{ ts.nome }}</strong>
+        <small class="tipo">{{ 'Uscita senza destinazione' if ts.verso == 'uscita' else 'Arrivo dal fornitore' }} · {{ quando(ts.creato_il) }}</small>
+        {% if ts.nota %}<small>«{{ ts.nota }}»</small>{% endif %}</td>
+      <td data-et="Negozio">{{ ts.origine_nome if ts.verso == 'uscita' else ts.destinazione_nome }}<small>{{ nomi_store[ts.store] }}</small></td>
+      <td class="num" data-et="Pezzi">{{ ts.pezzi }}<small>{{ plurale(ts.righe|selectattr('quantita')|list|length, 'articolo', 'articoli') }}</small></td>
+      <td>{% if vista == 'da_destinare' %}
+            {%- if ts.verso == 'ingresso' %}<span class="nota">da decidere</span>{% if ts.doppi %}<br><span class="chip att">possibile doppione di {{ ts.doppi[0].nome }}</span>{% endif %}
+            {%- elif ts.suggerito %}<strong>{{ ts.suggerito.negozio.nome }}</strong><small>{{ ts.suggerito.motivi|join('; ') }}</small>
+            {%- else %}<span class="nota">nessun suggerimento</span>{% endif %}
+          {%- else %}{{ ESITI_SHOPIFY.get(ts.esito, ts.esito) }}
+            {%- if ts.deciso_da %}<small>{{ ts.deciso_da }} {{ quando(ts.deciso_il) }}</small>{% endif %}
+            {%- if ts.stato_shopify and vista == 'altri' %}<small>su Shopify: {{ STATI_SHOPIFY.get(ts.stato_shopify, ts.stato_shopify) }}</small>{% endif %}{% endif %}</td>
+      <td class="num"><a class="pulsante {{ '' if vista == 'da_destinare' and loop.first else 'secondario' }} piccolo" href="/trasferimenti/shopify/{{ ts.store }}/{{ ts.numero }}">
+        {{- ('Scegli dove è andata' if ts.verso == 'uscita' else 'Decidi') if vista == 'da_destinare' else 'Apri' }}</a></td>
+    </tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="vuoto">{% if vista == 'da_destinare' %}Niente da sistemare.{% else %}Nessuno.{% endif %}
+  L'elenco si aggiorna a ogni lettura dei negozi.</div>
+{% endif %}
+{% endblock %}

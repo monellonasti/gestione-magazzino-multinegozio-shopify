@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% import "_macro.html" as m with context %}
+{% block titolo %}Anomalie{% endblock %}
+{% block corpo %}
+{% set bloccabile = responsabile and stato == 'aperta' and tipo in IN_BLOCCO %}
+<header class="testata">
+  <div>{% if tipo or stato != 'aperta' %}<p class="sopratitolo"><a class="indietro" href="/anomalie">Anomalie</a></p>{% endif %}
+    <h1>{{ TIPI_ANOMALIA[tipo] if tipo else 'Anomalie' }}{% if stato != 'aperta' %} <small>{{ 'ignorate' if stato == 'ignorata' else 'risolte' }}</small>{% endif %}</h1></div>
+</header>
+<p class="nota">Quelle dei dati si aprono e si chiudono da sole a ogni lettura dei negozi; le altre si chiudono decidendo cosa fare.
+  {% if not responsabile %}Le gestisce il responsabile.{% endif %}</p>
+{% if shopify %}<p class="avviso info">{{ plurale(shopify, 'movimento fatto', 'movimenti fatti') }} su Shopify da sistemare: non sono qui ma in
+  <a href="/trasferimenti/shopify">Trasferimenti › Fatti su Shopify</a>.</p>{% endif %}
+<nav class="schede-filtro" aria-label="Filtra">
+  <a href="/anomalie" class="{{ 'attivo' if stato == 'aperta' and not tipo }}">Tutte le aperte</a>
+  {% for k, v in TIPI_ANOMALIA.items() %}{% if per_tipo.get(k) and k not in TIPI_SHOPIFY %}<a href="/anomalie?tipo={{ k }}" class="{{ 'attivo' if tipo == k and stato == 'aperta' }}">{{ v }} ({{ per_tipo[k] }})</a>{% endif %}{% endfor %}
+  <a href="/anomalie?stato=ignorata{{ '&tipo=' ~ tipo if tipo }}" class="{{ 'attivo' if stato == 'ignorata' }}">Ignorate</a>
+  <a href="/anomalie?stato=risolta{{ '&tipo=' ~ tipo if tipo }}" class="{{ 'attivo' if stato == 'risolta' }}">Risolte</a>
+</nav>
+
+{% macro scheda(a, spunta=false) %}
+  <li class="grav-{{ a.gravita }}" id="anomalia-{{ a.id }}">
+    <div class="testa">{% if spunta %}<input type="checkbox" name="ids" value="{{ a.id }}" form="blocco" aria-label="Seleziona">{% endif %}
+      <span class="tipo">{{ TIPI_ANOMALIA.get(a.tipo, a.tipo) }}</span><strong>{{ a.titolo }}</strong>
+      <span class="data">{{ quando(a.creata_il) }}</span></div>
+    <p>{{ a.dettaglio }}</p>
+    {% if a.stato != 'aperta' %}<p class="nota">{{ 'Ignorata' if a.stato == 'ignorata' else 'Risolta' }}{% if a.chiusa_da %} da {{ a.chiusa_da }}{% endif %} {{ quando(a.chiusa_il) }}{% if a.nota %}: {{ a.nota }}{% endif %}</p>{% endif %}
+    <div class="azioni">
+      {% for etichetta, url in azioni[a.id] %}<a class="pulsante {{ 'secondario' if not loop.first }} piccolo" href="{{ url }}">{{ etichetta }}</a>{% endfor %}
+      {% if responsabile %}
+        {% if a.stato == 'aperta' %}
+        <form method="post" action="/anomalie/{{ a.id }}/ignora" class="in-linea">
+          {{ m.gettone_campo() }}<input type="hidden" name="torna" value="{{ torna }}">
+          <input name="nota" placeholder="Motivo" required aria-label="Motivo"><button class="secondario piccolo">Ignora</button></form>
+        {% else %}
+        <form method="post" action="/anomalie/{{ a.id }}/riapri" class="in-linea">
+          {{ m.gettone_campo() }}<input type="hidden" name="torna" value="{{ torna }}"><button class="secondario piccolo">Riapri</button></form>
+        {% endif %}
+      {% endif %}
+    </div>
+  </li>
+{% endmacro %}
+
+{% if gruppi is not none %}
+  {# ------------------------------------------------------------ gruppi, in ordine di urgenza #}
+  {% for g in gruppi %}
+  <section class="gruppo-anomalie" id="gruppo-{{ g.tipo }}">
+    <div class="titolo-riga"><h2>{{ TIPI_ANOMALIA[g.tipo] }} <span class="conteggio{{ ' grave' if g.righe and g.righe[0].gravita >= 3 }}">{{ g.n }}</span></h2>
+      <span class="spingi"></span>{% if g.n > g.righe|length %}<a class="pulsante secondario piccolo" href="/anomalie?tipo={{ g.tipo }}">Vedi tutte ({{ g.n }})</a>{% endif %}</div>
+    <p class="cosa-fare"><strong>Cosa fare:</strong> {{ COSA_FARE.get(g.tipo, '') }}</p>
+    <ul class="anomalie">{% for a in g.righe %}{{ scheda(a) }}{% endfor %}</ul>
+  </section>
+  {% else %}
+  <div class="vuoto">Nessuna anomalia aperta.</div>
+  {% endfor %}
+{% elif righe %}
+  {% if tipo and stato == 'aperta' %}<p class="cosa-fare"><strong>Cosa fare:</strong> {{ COSA_FARE.get(tipo, '') }}</p>{% endif %}
+  <ul class="anomalie" id="elenco-anomalie">{% for a in righe %}{{ scheda(a, bloccabile) }}{% endfor %}</ul>
+  {{ m.pagine(pagina, pagine, '/anomalie?stato=' ~ stato ~ '&tipo=' ~ tipo) }}
+  {% if bloccabile %}
+  <form method="post" action="/anomalie/ignora" id="blocco" class="barra-azioni" data-ignora-blocco>
+    {{ m.gettone_campo() }}<input type="hidden" name="torna" value="{{ torna }}">
+    <a href="#elenco-anomalie" data-seleziona-tutte="#elenco-anomalie" data-solo-js hidden>Seleziona tutte in questa pagina</a>
+    <span class="spingi"></span>
+    <label class="in-riga">Motivo <input name="nota" required placeholder="es. buoni regalo, non si abbinano"></label>
+    <button class="secondario" data-ignora-selezionate>Ignora le selezionate</button>
+  </form>
+  {% endif %}
+{% else %}
+<div class="vuoto">Nessuna anomalia {{ {'aperta': 'aperta', 'ignorata': 'ignorata', 'risolta': 'risolta'}[stato] }}{% if tipo %} di questo tipo{% endif %}.</div>
+{% endif %}
+{% endblock %}
