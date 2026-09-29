@@ -155,3 +155,44 @@ def test_righe_senza_corrispondenza_segnalate(base):
     assert c.execute("SELECT COUNT(*) FROM anomalie WHERE titolo LIKE 'Da aggiornare a mano%' AND stato='aperta'").fetchone()[0] == 2
     operazioni.esegui_in_attesa(c, s)
     assert giacenza(c, "demo-porto", 1) == 1 and giacenza(c, "demo-web", 1) == 9 and giacenza(c, "demo-web", 3) == 4
+
+
+def test_decisione_su_righe_cambiate_nel_frattempo(base):
+    """Una lettura da Shopify arriva fra l'apertura della pagina e la conferma: la decisione non passa sui numeri vecchi."""
+    c, s = base
+    sincronizza(c, s, DEMO)
+
+    class LetturaNelFrattempo:
+        """Subito dopo aver letto il movimento, la lettura periodica salva altri pezzi spediti (ora 6 invece di 4)."""
+        def __init__(self):
+            self.fatto = False
+
+        def execute(self, sql, *parametri):
+            r = c.execute(sql, *parametri)
+            if not self.fatto and sql.startswith("SELECT * FROM trasferimenti_shopify"):
+                self.fatto = True
+                riga = r.fetchone()
+                righe = json.loads(riga["righe"]) + [{"line_id": "x", "titolo": "Articolo 2", "item_id": "demo-centro/i2",
+                                                      "variant_id": "demo-centro/v2", "sku": "SKU-2", "ean": "", "totale": 2,
+                                                      "spedita": 2, "quantita": 2}]
+                c.execute("UPDATE trasferimenti_shopify SET righe=?, pezzi=6 WHERE nome='#T1'", (json.dumps(righe),))
+                return type("Una", (), {"fetchone": lambda _: riga})()
+            return r
+
+    with pytest.raises(T.ErroreFlusso, match="è cambiato mentre decidevi"):
+        da_shopify.decidi(LetturaNelFrattempo(), DEMO, True, "mario", "magazziniere", "demo-centro", "1", "porto", True, True)
+    assert c.execute("SELECT esito FROM trasferimenti_shopify WHERE nome='#T1'").fetchone()[0] == "da_destinare"
+    assert not c.execute("SELECT COUNT(*) FROM operazioni").fetchone()[0]
+
+
+def test_anomalie_di_seguito_visibili_fra_le_anomalie(base):
+    """Un movimento cambiato dopo la decisione va sistemato a mano: deve comparire fra le anomalie e nel «Da fare»."""
+    from magazzino import compiti
+    c, s = base
+    sincronizza(c, s, DEMO)
+    da_shopify.decidi(c, DEMO, True, "mario", "magazziniere", "demo-centro", "1", "porto", True, True)
+    trasferimento_shopify(c, "demo-centro", 1, [(1, 3), (2, 2)], nota="per il porto")      # su Shopify un pezzo in più
+    sincronizza(c, s, DEMO)
+    a = c.execute("SELECT tipo, stato FROM anomalie WHERE dedup LIKE 'shopify_cambiato:%'").fetchone()
+    assert tuple(a) == ("shopify_a_mano", "aperta")
+    assert dict(compiti.anomalie(c)["per_tipo"]).get("shopify_a_mano") == 1

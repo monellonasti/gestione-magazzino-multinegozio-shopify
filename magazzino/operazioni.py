@@ -85,7 +85,9 @@ def esegui(c, sorgente, op_id: int) -> str:
     motivo = MOTIVI[op["tipo"]]
 
     if op["stato"] == "incerta":
-        eta = datetime.now(timezone.utc) - datetime.fromisoformat(op["aggiornata_il"])
+        # la finestra si conta da quando QUESTA chiave è partita la prima volta (Shopify la ricorda 24 ore): i tentativi
+        # successivi non la allungano. Per le operazioni di prima di chiave_dal vale la creazione, che viene prima.
+        eta = datetime.now(timezone.utc) - datetime.fromisoformat(op.get("chiave_dal") or op["creata_il"])
         if not op["chiave_shopify"] or eta > FINESTRA_CHIAVE:
             _salva(c, op_id, stato="da_verificare",
                    errore="Esito incerto da più di 23 ore: controlla nello storico della giacenza su Shopify se il "
@@ -99,13 +101,16 @@ def esegui(c, sorgente, op_id: int) -> str:
             return "fatta"
         except Conflitto:
             pass                           # la chiamata originale NON era passata: si riparte con una lettura nuova
-        except Incerta as e:
-            _salva(c, op_id, errore=str(e))
-            return "incerta"
-        except (Rifiutata, ErroreSorgente) as e:
+        except Rifiutata as e:
+            # Shopify ha elaborato la ripetizione con la stessa chiave e l'ha respinta: l'originale non era passata
             _salva(c, op_id, stato="errore", errore=str(e))
             _segnala(c, op, str(e))
             return "errore"
+        except ErroreSorgente as e:
+            # rete, token, autorizzazione, errore generale: della chiamata originale non si sa ancora nulla. Resta
+            # incerta e si ripete con la stessa chiave; «Riprova» la riscriverebbe con una chiave nuova, due volte
+            _salva(c, op_id, errore=str(e))
+            return "incerta"
 
     for _ in range(TENTATIVI):
         try:
@@ -125,7 +130,8 @@ def esegui(c, sorgente, op_id: int) -> str:
             return "conflitto"
         tentativo = op["tentativi"] + 1
         op.update(tentativi=tentativo, chiave_shopify=f"{op['chiave']}-t{tentativo}", change_from=disp)
-        _salva(c, op_id, stato="in_corso", tentativi=tentativo, chiave_shopify=op["chiave_shopify"], change_from=disp)
+        _salva(c, op_id, stato="in_corso", tentativi=tentativo, chiave_shopify=op["chiave_shopify"], change_from=disp,
+               chiave_dal=ora())
         try:
             dopo = sorgente.aggiusta(op["store"], op["location_id"], op["item_id"], op["delta"], disp, motivo, doc,
                                      op["chiave_shopify"])
@@ -184,7 +190,11 @@ def decidi(c, utente, op_id: int, decisione: str, nota: str):
         raise ValueError("scrivi una nota: cosa hai verificato")
     nuovo = {"riprova": "da_fare", "applicata": "fatta", "non_applicata": "da_fare", "annulla": "annullata"}[decisione]
     with transazione(c):
-        _salva(c, op_id, stato=nuovo, errore=f"{decisione}: {nota}")
+        # solo se l'operazione è ancora com'era sulla pagina: nel frattempo può averla ripresa la lettura periodica
+        cambiate = c.execute("UPDATE operazioni SET stato=?, errore=?, aggiornata_il=? WHERE id=? AND stato=?",
+                             (nuovo, f"{decisione}: {nota}", ora(), op_id, op["stato"])).rowcount
+        if not cambiate:
+            raise ValueError("L'operazione è cambiata nel frattempo: ricarica la pagina e decidi di nuovo")
         registra(c, utente, f"operazione {decisione}", f"operazione {op_id}", {"stato": op["stato"]}, {"stato": nuovo, "nota": nota})
         if nuovo in FINALI:
             chiudi_anomalia(c, f"operazione:{op_id}", utente, nota)

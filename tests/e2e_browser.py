@@ -11,7 +11,7 @@ import json, re, sqlite3, subprocess, sys, time
 from datetime import date, timedelta
 from pathlib import Path
 
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import sync_playwright
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PY = BASE_DIR / ".venv" / "Scripts" / "python.exe"
@@ -280,7 +280,6 @@ def prova(browser):
        and "nota del trasferimento" in mag.content())
     foto(mag, "21-shopify-scelta-destinazione")
     righe_ts = db("SELECT righe FROM trasferimenti_shopify WHERE nome='#T0101'")[0][0]
-    import json
     righe_ts = json.loads(righe_ts)
     porto_prima = {r["variant_id"]: db("SELECT disponibile FROM demo_varianti WHERE store='demo-porto' AND ean=?", r["ean"])[0][0] for r in righe_ts}
     ok("«È già arrivata?» visibile solo con un negozio scelto", mag.locator("[data-se-negozio]").is_visible())

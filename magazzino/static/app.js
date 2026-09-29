@@ -24,12 +24,17 @@
     f.dataset.inviato = "1";
     modificheNonSalvate = false;
     if (b) { b.setAttribute("aria-busy", "true"); b.dataset.testo = b.textContent; b.textContent = "Attendere…"; }
-    // se la pagina non cambia (download, errore di rete) si sblocca dopo qualche secondo
-    setTimeout(function () {
-      delete f.dataset.inviato;
-      if (b && b.dataset.testo) { b.removeAttribute("aria-busy"); b.textContent = b.dataset.testo; }
-    }, 8000);
+    // finché il server non risponde la pagina resta ferma (una spedizione rilegge Shopify e può metterci): si sblocca
+    // solo se dopo un minuto è ancora qui, cioè la rete è caduta. Sbloccarla prima faceva ripartire il doppio invio
+    setTimeout(function () { sblocca(f, b); }, 60000);
   }, true);
+  function sblocca(f, b) {
+    delete f.dataset.inviato;
+    if (b && b.dataset.testo) { b.removeAttribute("aria-busy"); b.textContent = b.dataset.testo; }
+  }
+  window.addEventListener("pageshow", function (e) {         // tornati indietro a questa pagina: di nuovo utilizzabile
+    if (e.persisted) $$("form[data-inviato]").forEach(function (f) { sblocca(f, $("[aria-busy]", f)); });
+  });
 
   // ------------------------------------------------------------------ 2. quantità con − e +
   document.addEventListener("click", function (e) {
@@ -77,11 +82,25 @@
   // finisce lì dentro: viene girato al lettore (nessuna quantità ha 6 cifre).
   var lettore = $("[data-scanner]") || $("[data-lettore-globale]");
   var buffer = "", ultimo = 0;
+  // nel campo il lettore aggiunge le cifre dopo il numero che c'era («2» + codice): il codice è solo la raffica di
+  // tasti veloci (nessuno scrive 6 cifre in 80 ms), e nel campo torna il numero di prima
+  var raffica = { campo: null, testo: "", prima: "", ultimo: 0 };
   document.addEventListener("keydown", function (e) {
     var t = e.target;
-    if (e.key === "Enter" && t && t.matches && t.matches("input.qta") && t.value.length >= 6 && $("[data-scanner]")) {
-      var s = $("[data-scanner]");
-      e.preventDefault(); s.value = t.value; t.value = t.defaultValue; invia(s);
+    if (t && t.matches && t.matches("input.qta") && $("[data-scanner]")) {
+      var adesso_ = Date.now();
+      if (raffica.campo !== t || adesso_ - raffica.ultimo > 80) raffica = { campo: t, testo: "", prima: t.value, ultimo: adesso_ };
+      raffica.ultimo = adesso_;
+      if (e.key === "Enter" && raffica.testo.length >= 6) {
+        var s = $("[data-scanner]");
+        e.preventDefault();
+        t.value = raffica.prima;
+        if (t.value === t.defaultValue) modificheNonSalvate = false;
+        s.value = raffica.testo; raffica.testo = "";
+        invia(s);
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        raffica.testo += e.key;
+      }
       return;
     }
     if (!lettore || (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT"))) return;
@@ -96,7 +115,11 @@
   });
   function invia(campo) {
     var f = campo.form || campo.closest("[data-lettore]");
-    if (f && f.matches("[data-lettore=conta]")) { contaLettura(campo.value); campo.value = ""; return; }
+    if (f && f.matches("[data-lettore=conta]")) {
+      // ricezione: una lettura prima di «Conta con il lettore» avvia la conta (prima finiva nel pannello nascosto)
+      if (f.hidden) { var avvia = $("[data-conta-lettore]"); if (avvia) avvia.click(); }
+      contaLettura(campo.value); campo.value = ""; return;
+    }
     if (f && f.requestSubmit) f.requestSubmit(); else if (f && f.submit) f.submit();
   }
   if ($("[data-scanner]") && location.hash === "#scanner") $("[data-scanner]").focus();
@@ -121,12 +144,13 @@
     if (d.versione) $$("input[name=versione]").forEach(function (i) { i.value = d.versione; });
     if (d.approvati_totale === undefined) return;
     var testo = $("[data-avanz-testo]"), barra = $("[data-avanz-barra]");
-    if (testo) testo.textContent = "Presi " + d.prelevati_totale + " di " + d.approvati_totale + " pezzi";
+    if (testo) testo.textContent = "Presi " + d.prelevati_totale + " di " + d.approvati_totale + (d.approvati_totale === 1 ? " pezzo" : " pezzi");
     if (barra) { barra.max = d.approvati_totale; barra.value = d.prelevati_totale; }
     var sp = $("[data-spedisci]"), motivo = $("[data-motivo]");
     if (sp && !sp.getAttribute("aria-busy")) {
       var mancano = d.approvati_totale - d.prelevati_totale;
-      sp.textContent = d.tutto ? sp.dataset.testoTutto : sp.dataset.testoParziale.replace("{n}", mancano);
+      sp.textContent = d.tutto ? sp.dataset.testoTutto
+        : (mancano === 1 && sp.dataset.testoParzialeUno ? sp.dataset.testoParzialeUno : sp.dataset.testoParziale.replace("{n}", mancano));
       sp.classList.toggle("secondario", !d.tutto);
       if (!sp.title || sp.title === "nessun pezzo preso") { sp.disabled = !d.prelevati_totale; sp.title = d.prelevati_totale ? "" : "nessun pezzo preso"; }
     }
@@ -149,7 +173,7 @@
     return fetch(url, { method: "POST", body: dati, credentials: "same-origin", headers: { "Accept": "application/json" } })
       .then(function (r) {
         var tipo = r.headers.get("content-type") || "";
-        if (tipo.indexOf("application/json") < 0) throw { sessione: true };
+        if (tipo.indexOf("application/json") < 0) throw { sessione: r.redirected && /\/login/.test(r.url), stato: r.status };
         return r.json();
       });
   }
@@ -186,7 +210,15 @@
       if (err && err.sessione) {
         coda.length = 0; esito("Sessione scaduta: ricarica la pagina", true); suona("errore"); return;
       }
-      esito("Connessione persa: riprovo… (" + coda.length + " in attesa)", true); suona("errore");
+      voce.tentativi = (voce.tentativi || 0) + 1;
+      if (err && err.stato && voce.tentativi >= 3) {
+        // il programma risponde con un errore anche dopo 3 prove: questa lettura si lascia, le altre in coda vanno avanti
+        coda.shift();
+        esito("Lettura non registrata (errore del programma): spara di nuovo " + voce.codice, true); suona("errore");
+        setTimeout(prossima, 500); return;
+      }
+      esito((err && err.stato ? "Risposta non valida dal programma" : "Connessione persa") + ": riprovo… (" + coda.length + " in attesa)", true);
+      suona("errore");
       setTimeout(prossima, 2500);
     });
   }
@@ -212,24 +244,38 @@
         $("[data-scanner]").focus();
       }).catch(function () { esito("Non annullato: connessione persa, riprova", true); });
     });
-    // i numeri scritti a mano si salvano da soli, riga per riga
+    // i numeri scritti a mano si salvano da soli, riga per riga. Un invio per riga alla volta: con due «+» veloci le
+    // risposte potevano arrivare al contrario e lasciare sul server (o nel campo) il numero vecchio
+    var inVolo = {};
+    var salvaRiga = function (i) {
+      if (inVolo[i.name]) { inVolo[i.name] = "di nuovo"; return; }
+      inVolo[i.name] = true;
+      var inviato = i.value, dati = new FormData(), tr = i.closest("tr");
+      dati.append("gettone", scheda.querySelector("input[name=gettone]").value);
+      dati.append(i.name, inviato);
+      chiama(scheda.dataset.urlPreleva, dati).then(function (d) {
+        var ancora = inVolo[i.name] === "di nuovo";
+        inVolo[i.name] = false;
+        if (ancora && i.value !== inviato) { salvaRiga(i); return; }     // intanto è cambiato: si manda il numero di adesso
+        aggiornaTotali(d);
+        if (d.ok) { aggiornaRiga(d, false); i.defaultValue = i.value; tr.classList.remove("errore-riga"); modificheNonSalvate = false; }
+        else { tr.classList.add("errore-riga"); esito(d.messaggio, true); suona("errore"); }
+      }).catch(function (err) {
+        inVolo[i.name] = false;
+        esito(err && err.sessione ? "Sessione scaduta: ricarica la pagina e rientra, poi riscrivi il numero"
+          : "Numero non salvato: connessione persa. Premi «Salva i numeri».", true);
+      });
+    };
     $$("#prelievo input.qta").forEach(function (i) {
       i.addEventListener("input", function () { modificheNonSalvate = true; });
-      i.addEventListener("change", function () {
-        var dati = new FormData();
-        dati.append("gettone", scheda.querySelector("input[name=gettone]").value);
-        dati.append(i.name, i.value);
-        var tr = i.closest("tr");
-        chiama(scheda.dataset.urlPreleva, dati).then(function (d) {
-          aggiornaTotali(d);
-          if (d.ok) { aggiornaRiga(d, false); i.defaultValue = i.value; tr.classList.remove("errore-riga"); modificheNonSalvate = false; }
-          else { tr.classList.add("errore-riga"); esito(d.messaggio, true); suona("errore"); }
-        }).catch(function () { esito("Numero non salvato: connessione persa. Premi «Salva i numeri».", true); });
-      });
+      i.addEventListener("change", function () { salvaRiga(i); });
     });
     // il motivo di una spedizione incompleta si chiede solo quando si spedisce davvero incompleto
     var motivo = $("[data-motivo]"), spedisci = $("[data-spedisci]");
     if (motivo && !$("input", motivo).value) motivo.hidden = true;
+    if (spedisci && motivo) $("input", motivo).addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); spedisci.click(); }
+    });
     if (spedisci && motivo) spedisci.addEventListener("click", function (e) {
       if (spedisci.classList.contains("secondario") && !$("input", motivo).value.trim()) {
         e.preventDefault();
@@ -402,22 +448,40 @@
   }
 
   // ------------------------------------------------------------------ 12. lettura dei negozi e scritture in corso
+  // qualcosa scritto nella pagina e non ancora inviato (un rotto, una nota, la conta aperta)? Allora niente ricarica
+  function lavoroInCorso() {
+    if (coda.length || modificheNonSalvate) return true;
+    var pannello = $("[data-lettore=conta]");
+    if (pannello && !pannello.hidden) return true;
+    return $$("main input, main textarea, main select").some(function (el) {
+      if (el.type === "hidden" || el.disabled || el.hasAttribute("data-suono")) return false;
+      if (el.type === "checkbox" || el.type === "radio") return el.checked !== el.defaultChecked;
+      if (el.tagName === "SELECT") {
+        var predefinita = 0;
+        $$("option", el).forEach(function (o, k) { if (o.defaultSelected) predefinita = k; });
+        return el.selectedIndex !== predefinita;
+      }
+      return el.value !== el.defaultValue;
+    });
+  }
   var barra = $("[data-sync-in-corso]");
   if (barra) {
     var testo = document.getElementById("stato-sync");
     var giro = setInterval(function () {
       fetch("/stato-sync", { credentials: "same-origin" }).then(function (r) { return r.json(); }).then(function (s) {
-        if (s.in_corso) { testo.textContent = "Lettura in corso: " + s.messaggio; }
-        else { clearInterval(giro); location.reload(); }
+        if (s.in_corso) { testo.textContent = "Lettura in corso: " + s.messaggio; return; }
+        clearInterval(giro);
+        if (lavoroInCorso()) testo.textContent = "Dati dei negozi aggiornati: ricarica la pagina quando hai finito";
+        else location.reload();
       }).catch(function () { clearInterval(giro); });
     }, 2000);
   }
   var attesa = $("[data-ricarica]");
   if (attesa) {
-    setTimeout(function () {
-      var occupato = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && document.activeElement.value;
-      if (!occupato && !coda.length) location.reload();
-    }, parseInt(attesa.dataset.ricarica, 10) * 1000);
+    var ogni = parseInt(attesa.dataset.ricarica, 10) * 1000;
+    (function prova() {
+      setTimeout(function () { if (lavoroInCorso()) prova(); else location.reload(); }, ogni);
+    })();
   }
 
   // telefono: la voce attiva del menu in basso resta in vista

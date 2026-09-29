@@ -51,6 +51,7 @@ def main():
         c = connetti(cfg.db_path)
         prepara(c, cfg)
         auth.crea_utente(c, a.nome_utente, a.nome or a.nome_utente, a.ruolo, pw)
+        auth.chiudi_sessioni(c, a.nome_utente)           # con la password nuova si rientra su tutti i dispositivi
         print(f"Utente {a.nome_utente} ({a.ruolo}) salvato in {cfg.db_path.name}")
         return
 

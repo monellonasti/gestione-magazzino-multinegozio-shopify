@@ -29,6 +29,31 @@ def _fine(c, sid, esito, messaggio=None, righe=0):
     c.execute("UPDATE sincronizzazioni SET fine=?, esito=?, messaggio=?, righe=? WHERE id=?", (ora(), esito, messaggio, righe, sid))
 
 
+def _piu_recenti(c, sorgente, store, loc, righe, sid) -> list:
+    """
+    La lettura di un negozio dura anche mezzo minuto. Se nel frattempo il programma ha scritto su Shopify (una
+    spedizione, una ricezione), per quegli articoli la fotografia appena letta può essere più vecchia della scrittura,
+    e salvarla la cancellerebbe: il reintegro riproporrebbe pezzi già arrivati. Quegli articoli si rileggono; se la
+    rilettura non riesce, resta il dato locale aggiornato dalla scrittura.
+    """
+    inizio = c.execute("SELECT inizio FROM sincronizzazioni WHERE id=?", (sid,)).fetchone()[0]
+    cambiati = [r[0] for r in c.execute("SELECT DISTINCT item_id FROM operazioni WHERE store=? AND stato='fatta' "
+                                        "AND aggiornata_il >= ? AND item_id IS NOT NULL", (store, inizio))]
+    if not cambiati:
+        return righe
+    try:
+        livelli = sorgente.leggi_livelli(store, loc, cambiati)
+    except ErroreSorgente:
+        livelli = {r["item_id"]: {"disponibile": r["disponibile"], "giacenza": r["giacenza"]} for r in c.execute(
+            f"SELECT item_id, disponibile, giacenza FROM varianti WHERE store=? AND item_id IN ({','.join('?' * len(cambiati))})",
+            (store, *cambiati))}
+    out = []
+    for r in righe:
+        x = livelli.get(r["item_id"])
+        out.append({**r, "disponibile": x["disponibile"], "giacenza": x["giacenza"]} if x else r)
+    return out
+
+
 def sincronizza(c, sorgente, topo: Topologia, avanzamento=lambda testo: None) -> dict:
     """Legge tutti i negozi (in parallelo), salva, ricalcola. Ritorna {store: errore} per i negozi falliti."""
     errori = {}
@@ -54,6 +79,7 @@ def sincronizza(c, sorgente, topo: Topologia, avanzamento=lambda testo: None) ->
                 _fine(c, avvii[s], "errore", errori[s])
     adesso = ora()
     for s, (loc, righe) in risultati.items():
+        righe = _piu_recenti(c, sorgente, s, loc, righe, avvii[s])
         with transazione(c):
             c.execute("INSERT INTO sedi(store, location_id, nome) VALUES(?,?,?) ON CONFLICT(store) DO UPDATE SET "
                       "location_id=excluded.location_id, nome=excluded.nome", (s, loc, topo.canale(s).sede))
@@ -141,8 +167,16 @@ def aggiorna_anomalie(c, nuove: list, tipi: tuple):
         viste.add(a["dedup"])
         apri_anomalia(c, a["dedup"], a["tipo"], a["gravita"], a.get("chiave"), a["titolo"], a["dettaglio"], presenti.get(a["dedup"]))
     for dedup, r in presenti.items():
-        if dedup not in viste and r["stato"] == "aperta":
+        if dedup in viste:
+            continue
+        if r["stato"] == "aperta":
             chiudi_anomalia(c, dedup, "controllo automatico", "la condizione non c'è più")
+        elif r["stato"] == "ignorata":
+            # l'ignora valeva finché la condizione restava: sparita, si chiude. Se un giorno torna (una giacenza di nuovo
+            # sotto zero), è un'anomalia nuova da guardare e non deve restare nascosta dal motivo di allora
+            c.execute("UPDATE anomalie SET stato='risolta', chiusa_da=?, chiusa_il=?, "
+                      "nota=TRIM(COALESCE(nota, '') || ' (condizione sparita)') WHERE dedup=? AND stato='ignorata'",
+                      ("controllo automatico", ora(), dedup))
 
 
 def apri_anomalia(c, dedup, tipo, gravita, chiave, titolo, dettaglio, esistente="?"):

@@ -110,6 +110,17 @@ MIGRAZIONI = [
     ALTER TABLE trasferimenti_shopify ADD COLUMN destinazione_nome TEXT;
     ALTER TABLE demo_trasferimenti ADD COLUMN destinazione_location TEXT;
     """,
+    # 4: indici per i volumi di un anno. Senza, l'elenco dei trasferimenti contava gli aggiornamenti Shopify di ogni
+    # trasferimento scorrendo tutta la tabella operazioni (11 secondi con 800 trasferimenti e 60.000 operazioni)
+    """
+    CREATE INDEX IF NOT EXISTS operazioni_trasferimento ON operazioni(trasferimento_id, stato);
+    CREATE INDEX IF NOT EXISTS operazioni_stato ON operazioni(stato);
+    CREATE INDEX IF NOT EXISTS registro_oggetto ON registro(oggetto);
+    -- quando è partita la chiave @idempotent in uso: la finestra delle 23 ore si conta da lì, non dall'ultimo tentativo
+    ALTER TABLE operazioni ADD COLUMN chiave_dal TEXT;
+    -- le anomalie di seguito dei movimenti Shopify (cambiato dopo la decisione, riga non riconosciuta) si vedono
+    UPDATE anomalie SET tipo='shopify_a_mano' WHERE dedup LIKE 'shopify_cambiato:%' OR dedup LIKE 'shopify_riga:%';
+    """,
 ]
 
 

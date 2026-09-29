@@ -15,7 +15,7 @@ con --env (per esempio un .env in un'altra cartella). Lo script non la stampa ma
 
 Uscita: magazzino/static/demo/prodotti/<file>.jpg (512x512), originali PNG in dati/foto_demo/ (fuori da git).
 """
-import base64, json, os, re, sys, threading, time, unicodedata, urllib.error, urllib.request
+import base64, json, os, sys, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 

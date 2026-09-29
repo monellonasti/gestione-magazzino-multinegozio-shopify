@@ -115,7 +115,7 @@ def test_flusso_completo_con_ricezione_parziale(negozi):
 
     T.ricevi(c, DEMO, True, "lucia", tid, {r1["id"]: (2, 0)}, "primo collo")
     T.ricevi(c, DEMO, True, "lucia", tid, {r1["id"]: (1, 1), r2["id"]: (1, 0)}, "secondo collo")
-    with pytest.raises(T.ErroreFlusso, match="ne mancano"):
+    with pytest.raises(T.ErroreFlusso, match="ne manca 1, ne hai indicati 2"):
         T.ricevi(c, DEMO, True, "lucia", tid, {r2["id"]: (2, 0)})    # piu' di quanto spedito
     operazioni.esegui_in_attesa(c, sorgente)
     assert giacenza(c, "demo-porto", 1) == 3                        # 2 + 1 buoni; il danneggiato non si carica
@@ -188,3 +188,102 @@ def test_scritture_disattivate_bloccano_spedizione(negozi):
     T.inizia_preparazione(c, "mario", tid, 2)
     with pytest.raises(T.ErroreFlusso, match="disattivate"):
         T.spedisci(c, DEMO, sorgente, False, "mario", tid, 3, {1: 1})
+
+
+def test_due_tablet_registrano_lo_stesso_arrivo(negozi, monkeypatch):
+    """Due arrivi registrati insieme su righe viste prima dell'altro: niente pezzi ricevuti oltre lo spedito."""
+    c, sorgente, _ = negozi
+    tid = T.crea(c, DEMO, "mario", "centro", "porto", "manuale", [{"chiave": "E:0800000000011", "quantita": 5}])
+    t, _ = T.carica(c, tid)
+    T.approva(c, "anna", tid, t["versione"], {})
+    t, (r,) = T.carica(c, tid)
+    T.inizia_preparazione(c, "mario", tid, t["versione"])
+    T.preleva(c, "mario", tid, r["id"], 5)
+    t, _ = T.carica(c, tid)
+    T.spedisci(c, DEMO, sorgente, True, "mario", tid, t["versione"], {})
+    vista_dal_secondo = T.carica(c, tid)                             # il secondo tablet ha la pagina aperta da prima
+    T.ricevi(c, DEMO, True, "lucia", tid, {r["id"]: (3, 0)}, "primo tablet")
+    monkeypatch.setattr(T, "carica", lambda c_, t_: vista_dal_secondo)
+    with pytest.raises(T.ErroreFlusso, match="nel frattempo"):
+        T.ricevi(c, DEMO, True, "paolo", tid, {r["id"]: (3, 0)}, "secondo tablet")
+    monkeypatch.undo()
+    riga = T.carica(c, tid)[1][0]
+    assert (riga["ricevuta"], riga["spedita"]) == (3, 5)
+    assert c.execute("SELECT COUNT(*) FROM operazioni WHERE tipo='carico'").fetchone()[0] == 1   # un solo carico su Porto
+
+
+def test_differenza_chiusa_da_due_pagine(negozi):
+    c, sorgente, _ = negozi
+    tid = T.crea(c, DEMO, "mario", "centro", "porto", "manuale", [{"chiave": "E:0800000000011", "quantita": 2}])
+    t, _ = T.carica(c, tid)
+    T.approva(c, "anna", tid, t["versione"], {})
+    t, (r,) = T.carica(c, tid)
+    T.inizia_preparazione(c, "mario", tid, t["versione"])
+    T.preleva(c, "mario", tid, r["id"], 2)
+    t, _ = T.carica(c, tid)
+    T.spedisci(c, DEMO, sorgente, True, "mario", tid, t["versione"], {})
+    T.chiudi_ricezione(c, "lucia", tid, "non è arrivato niente")
+    vista = c.execute("SELECT * FROM righe WHERE id=?", (r["id"],)).fetchone()        # la seconda pagina la vede aperta
+    T.chiudi_differenza(c, DEMO, True, "anna", r["id"], "arrivata_dopo", "arrivato il giorno dopo")
+
+    class ConnessioneDellAltraPagina:
+        """La prima lettura della riga restituisce quella vista prima; tutto il resto è il database vero."""
+        def __init__(self):
+            self.prima = True
+
+        def execute(self, sql, *parametri):
+            if self.prima and sql.startswith("SELECT * FROM righe WHERE id=?"):
+                self.prima = False
+                return type("Una", (), {"fetchone": lambda _: vista})()
+            return c.execute(sql, *parametri)
+
+    with pytest.raises(T.ErroreFlusso, match="già chiusa nel frattempo"):
+        T.chiudi_differenza(ConnessioneDellAltraPagina(), DEMO, True, "anna", r["id"], "rientrata_origine", "ritrovato")
+    assert c.execute("SELECT COUNT(*) FROM operazioni WHERE tipo IN ('carico','rientro')").fetchone()[0] == 1
+
+
+def test_lettura_lenta_non_cancella_una_ricezione_appena_scritta(negozi):
+    """La lettura periodica fotografa Porto a 0, intanto una ricezione carica 4 pezzi: il dato salvato deve essere 4."""
+    from magazzino.db import connetti
+    c, sorgente, cfg = negozi
+    tid = T.crea(c, DEMO, "mario", "centro", "porto", "manuale", [{"chiave": "E:0800000000011", "quantita": 4}])
+    t, _ = T.carica(c, tid)
+    T.approva(c, "anna", tid, t["versione"], {})
+    t, (r,) = T.carica(c, tid)
+    T.inizia_preparazione(c, "mario", tid, t["versione"])
+    T.preleva(c, "mario", tid, r["id"], 4)
+    t, _ = T.carica(c, tid)
+    T.spedisci(c, DEMO, sorgente, True, "mario", tid, t["versione"], {})
+    operazioni.esegui_in_attesa(c, sorgente)
+
+    class LetturaLenta:
+        """Legge Porto, poi (mentre la lettura è ancora in corso) il programma registra l'arrivo e lo scrive su Shopify."""
+        def __init__(self):
+            self.fatto = False
+
+        def leggi_varianti(self, store, loc, avanzamento=None):
+            righe = sorgente.leggi_varianti(store, loc, avanzamento)
+            if store == "demo-porto" and not self.fatto:
+                self.fatto = True
+                altra = connetti(cfg.db_path)
+                T.ricevi(altra, DEMO, True, "lucia", tid, {r["id"]: (4, 0)})
+                operazioni.esegui_in_attesa(altra, sorgente)
+                altra.close()
+            return righe
+
+        def __getattr__(self, nome):
+            return getattr(sorgente, nome)
+
+    assert sincronizza(c, LetturaLenta(), DEMO) == {}
+    assert giacenza(c, "demo-porto", 1) == 4                                        # su "Shopify"
+    assert c.execute("SELECT disponibile FROM varianti WHERE store='demo-porto' AND variant_id='demo-porto/v1'").fetchone()[0] == 4
+
+
+def test_due_liste_create_insieme_non_coprono_due_volte(negozi):
+    """Due pagine calcolano lo stesso reintegro e premono «Crea bozza» insieme: la seconda bozza non nasce."""
+    c, _, _ = negozi
+    p = list(piano(c, 14, 0).values())
+    crea_da_piano(c, p)                                             # la prima pagina
+    with pytest.raises(T.ErroreFlusso, match="già coperto"):
+        crea_da_piano(c, p)                                         # la seconda, con i numeri calcolati prima
+    assert c.execute("SELECT COUNT(*) FROM trasferimenti").fetchone()[0] == 1

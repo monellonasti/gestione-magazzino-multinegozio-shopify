@@ -30,7 +30,7 @@
   <form method="post" action="/bilanciamento/crea" data-conta-selezione>
     {{ m.gettone_campo() }}<input type="hidden" name="q" value="{{ q }}">
     <div class="riga-azioni"><span class="spingi"></span>
-      {{ m.scarica("/bilanciamento/export", {'q': q}|q, formati=("xlsx", "csv"), stampa="/bilanciamento/export.pdf?" ~ ({'q': q}|q), etichetta_stampa="Stampa proposta") }}</div>
+      {{ m.scarica("/bilanciamento/export", {'q': q}|q) }}</div>
     {% for (o, d), righe in gruppi.items() %}
     <h2>{{ nome_negozio[o] }} → {{ nome_negozio[d] }} <small>{{ plurale(righe|length, 'articolo', 'articoli') }} · {{ plurale(righe|sum(attribute='quantita'), 'pezzo', 'pezzi') }}</small></h2>
     <div class="tabella-scorre">

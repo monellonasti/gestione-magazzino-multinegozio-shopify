@@ -21,7 +21,7 @@
     <a class="pulsante piccolo" href="/trasferimenti/shopify/{{ aperti[0].store }}/{{ aperti[0].numero }}">Apri {{ aperti[0].nome }}</a></div>
 {% elif ts.esito == 'da_destinare' and doppi %}
   <div class="avviso info"><strong>Forse è la stessa consegna di
-    {% for d in doppi %}<a href="/trasferimenti/shopify/{{ d.store }}/{{ d.numero }}">{{ d.nome }}</a> ({{ nomi_store[d.store] }}, stessi {{ d.pezzi }} pezzi, {{ ESITI_SHOPIFY.get(d.esito, d.esito)|lower }}){% if not loop.last %}, {% endif %}{% endfor %}.</strong>
+    {% for d in doppi %}<a href="/trasferimenti/shopify/{{ d.store }}/{{ d.numero }}">{{ d.nome }}</a> ({{ nomi_store[d.store] }}, {{ 'stesso pezzo' if d.pezzi == 1 else 'stessi ' ~ d.pezzi ~ ' pezzi' }}, {{ ESITI_SHOPIFY.get(d.esito, d.esito)|lower }}){% if not loop.last %}, {% endif %}{% endfor %}.</strong>
     {% if aperti %}Se sì: qui scegli dove va la merce senza «Carica gli stessi pezzi anche su…», poi su {{ aperti[0].nome }} scegli «Stessa consegna».
     {% else %}{{ doppi[0].nome }} è già stato deciso: qui scegli «Stessa consegna».{% endif %}</div>
 {% endif %}
@@ -33,7 +33,7 @@
 <section class="conferma scheda" id="conferma">
   <h2>Conferma la ripartizione</h2>
   <p class="riassunto">
-  {% if f.modo == 'tutto' %}{{ A.nome }} tiene tutti i {{ ts.pezzi }} pezzi.
+  {% if f.modo == 'tutto' %}{{ A.nome }} tiene {{ "l'unico pezzo" if ts.pezzi == 1 else 'tutti i ' ~ ts.pezzi ~ ' pezzi' }}.
   {% elif f.modo == 'dividi' %}A {{ B.nome }} vanno <strong>{{ f.quote|sum }}</strong> pezzi, a {{ A.nome }} restano <strong>{{ ts.pezzi - f.quote|sum }}</strong>.
     {% if f.subito %}La quota di {{ B.nome }} è già lì: si carica subito.{% else %}La quota di {{ B.nome }} diventa un trasferimento da preparare: le giacenze si muovono alla spedizione e all'arrivo.{% endif %}
   {% elif f.modo == 'uguale' %}{{ A.nome }} tiene tutto e {{ B.nome }} riceve le stesse quantità: {{ f.quote|sum }} pezzi.
@@ -63,9 +63,10 @@
 
 <form method="post" action="{{ url }}#ripartizione" class="scheda" id="ripartizione" data-carico>
   {{ m.gettone_campo() }}
+  <button name="azione" value="anteprima" formaction="{{ url }}#conferma" hidden tabindex="-1" aria-hidden="true"></button>
   <h2>Dove va questa merce?</h2>
   <label class="scelta"><input type="radio" name="modo" value="tutto" {{ 'checked' if f.modo == 'tutto' }}>
-    <span><strong>Tutto a {{ A.nome }}</strong><small>{{ A.nome }} tiene tutti i {{ ts.pezzi }} pezzi</small></span></label>
+    <span><strong>Tutto a {{ A.nome }}</strong><small>{{ A.nome }} tiene {{ "l'unico pezzo" if ts.pezzi == 1 else 'tutti i ' ~ ts.pezzi ~ ' pezzi' }}</small></span></label>
   <label class="scelta"><input type="radio" name="modo" value="dividi" {{ 'checked' if f.modo == 'dividi' }}>
     <span><strong>Dividi con {{ B.nome }}</strong><small>una parte di ogni riga va a {{ B.nome }}</small></span></label>
   <div class="regola-divisione" data-se-modo="dividi">
@@ -113,7 +114,7 @@
         <td>{% if r.articolo %}{{ m.nome(r.articolo) }}{% else %}{{ r.titolo }} <span class="assoc ko">non riconosciuto</span>{% endif %}{{ m.codici(r.articolo or r) }}</td>
         <td class="num grande">{{ r.quantita }}</td>
         <td class="num">{{ m.qta(r.disp.get(A.id)) }}</td><td class="num">{{ m.qta(r.disp.get(B.id)) }}</td>
-        <td class="num">{% if f.modo in ('dividi', 'uguale') and r.chiave %}{{ m.passo_qta("b_" ~ loop.index0, k, r.quantita if f.modo == 'dividi' else none, etichetta="Pezzi a " ~ B.nome) }}{% else %}<span class="zero">—</span>{% endif %}</td>
+        <td class="num">{% if f.modo in ('dividi', 'uguale') and r.chiave %}{{ m.passo_qta("b_" ~ loop.index0, k, r.quantita, etichetta="Pezzi a " ~ B.nome) }}{% else %}<span class="zero">—</span>{% endif %}</td>
         <td class="num grande">{{ r.quantita - k if f.modo == 'dividi' else r.quantita }}</td></tr>
     {% endfor %}</tbody>
     <tfoot><tr><td></td><td><strong>Totale</strong></td><td class="num grande">{{ ts.pezzi }}</td><td></td><td></td>

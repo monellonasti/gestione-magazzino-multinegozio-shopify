@@ -83,3 +83,24 @@ def test_solo_un_negozio_e_specchio_mancante():
 def test_varianti_non_tracciate_ignorate():
     articoli, _ = abbina([v("demo-centro", "a", "8007", tracciata=0)], {}, DEMO)
     assert articoli == {}
+
+
+def test_anomalia_ignorata_si_chiude_se_la_condizione_sparisce(vuoto):
+    """Una giacenza negativa ignorata, tornata positiva e poi di nuovo negativa settimane dopo: la seconda si vede."""
+    from magazzino.negozi import DEMO
+    from magazzino.sync import sincronizza
+    from conftest import metti_varianti
+    c, s, _ = vuoto
+    metti_varianti(c, [("demo-centro", 1, "8000000000017", 5), ("demo-web", 1, "8000000000017", 5), ("demo-porto", 1, "8000000000017", -2)])
+    sincronizza(c, s, DEMO)
+    stato = lambda: c.execute("SELECT stato FROM anomalie WHERE tipo='quantita_incoerente'").fetchone()[0]
+    assert stato() == "aperta"
+    c.execute("UPDATE anomalie SET stato='ignorata', nota='conteggio in corso' WHERE tipo='quantita_incoerente'")
+    sincronizza(c, s, DEMO)
+    assert stato() == "ignorata"                                       # finché la condizione resta, non si riapre
+    c.execute("UPDATE demo_varianti SET disponibile=3 WHERE store='demo-porto'")
+    sincronizza(c, s, DEMO)
+    assert stato() == "risolta"
+    c.execute("UPDATE demo_varianti SET disponibile=-4 WHERE store='demo-porto'")
+    sincronizza(c, s, DEMO)
+    assert stato() == "aperta"

@@ -13,7 +13,7 @@
     <thead><tr><th>Quando</th><th>Documento</th><th>Movimento</th><th>Negozio Shopify</th><th class="num">Pezzi</th><th>Esito</th><th>Decisione</th></tr></thead>
     <tbody>{% for o in ops %}
       <tr><td class="data">{{ locale(o.aggiornata_il, '%d/%m %H:%M') }}</td>
-        <td>{% if o.trasferimento_id %}<a href="/trasferimenti/{{ o.trasferimento_id }}#operazioni">{{ o.codice }}</a>{% else %}rettifica {{ o.rettifica_id }}{% endif %}</td>
+        <td>{% if o.trasferimento_id %}<a href="/trasferimenti/{{ o.trasferimento_id }}#operazioni">{{ o.codice }}</a>{% elif o.rettifica_id %}rettifica {{ o.rettifica_id }}{% else %}movimento Shopify{% endif %}</td>
         <td>{{ OP_TIPI.get(o.tipo, o.tipo) }}</td><td>{{ nomi_store[o.store] }}</td><td class="num">{{ '%+d'|format(o.delta) }}</td>
         <td><span class="op op-{{ o.stato }}">{{ OP_STATI.get(o.stato, o.stato) }}</span>
           {% if o.errore and o.stato != 'fatta' %}<small class="blocco">{{ o.errore }}</small>{% endif %}

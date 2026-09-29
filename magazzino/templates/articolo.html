@@ -22,8 +22,8 @@
     <details><summary>Cambia scorta e scaffale</summary>
       <form method="post" action="/articolo/soglia" class="griglia-form">
         {{ m.gettone_campo() }}<input type="hidden" name="chiave" value="{{ a.chiave }}"><input type="hidden" name="negozio" value="{{ x.negozio.id }}">
-        <label>Scorta minima <input type="number" min="0" inputmode="numeric" name="minima" value="{{ x.soglia.minima }}"></label>
-        <label>Obiettivo <input type="number" min="0" inputmode="numeric" name="obiettivo" value="{{ x.soglia.obiettivo }}"></label>
+        <label>Scorta minima <input type="number" min="0" inputmode="numeric" name="minima" value="{{ x.soglia.minima }}" required></label>
+        <label>Obiettivo <input type="number" min="0" inputmode="numeric" name="obiettivo" value="{{ x.soglia.obiettivo }}" required></label>
         <label>Scaffale <input name="ubicazione" value="{{ x.ubicazione }}" maxlength="40" placeholder="es. B3-2"></label>
         <button class="secondario">Salva</button>
         {% if x.propria %}<button class="secondario" name="togli" value="1">Torna a quelle del negozio</button>{% endif %}
@@ -121,7 +121,7 @@
       {{ m.gettone_campo() }}<input type="hidden" name="chiave" value="{{ a.chiave }}">
       <label>Negozio <select name="negozio">{% for x in per_negozio if x.disp %}<option value="{{ x.negozio.id }}">{{ x.negozio.nome }}</option>{% endfor %}</select></label>
       <label>Fonte di riferimento <select name="fonte">{% for k, v in FONTI.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
-      <label>Pezzi contati <input type="number" min="0" inputmode="numeric" name="contati" placeholder="es. 4"></label>
+      <label>Pezzi contati <input type="number" min="0" max="100000" inputmode="numeric" name="contati" placeholder="es. 4 (con «Conteggio fisico»)"></label>
       <label>Motivo <input name="motivo" required placeholder="es. inventario del 25/09"></label>
       <button class="secondario">Controlla prima di confermare</button>
     </form>

@@ -84,7 +84,7 @@
     <details class="opzioni" {{ 'open' if doppi }}><summary>Opzioni</summary>
       <label class="spunta"><input type="checkbox" name="scala_specchi" value="1" {{ '' if doppi else 'checked' }}>
         Togli i pezzi anche da {{ specchi|join(', ') }} (è la stessa merce: Shopify non l'ha fatto)</label>
-      {% if doppi %}<p class="avviso info">Su {{ nomi_store[doppi[0].store] }} c'è {{ doppi[0].nome }} con gli stessi {{ doppi[0].pezzi }} pezzi, creato a pochi giorni di distanza:
+      {% if doppi %}<p class="avviso info">Su {{ nomi_store[doppi[0].store] }} c'è {{ doppi[0].nome }} con {{ 'lo stesso pezzo' if doppi[0].pezzi == 1 else 'gli stessi ' ~ doppi[0].pezzi ~ ' pezzi' }}, creato a pochi giorni di distanza:
         se è lo stesso movimento già fatto a mano anche lì, lascia la spunta tolta.</p>{% endif %}
     </details>
     {% endif %}

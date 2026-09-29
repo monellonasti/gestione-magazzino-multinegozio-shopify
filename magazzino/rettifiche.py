@@ -15,6 +15,7 @@ from .negozi import ErroreSorgente
 from .trasferimenti import ErroreFlusso, _canali
 
 FONTI = {"conteggio": "Conteggio fisico in negozio", "principale": "Canale principale (allinea gli specchi)"}
+MASSIMO_CONTATI = 100_000             # oltre, quasi sempre è uno zero di troppo battuto per sbaglio
 
 
 def _leggi(c, topo, sorgente, negozio, chiave):
@@ -42,15 +43,22 @@ def richiedi(c, topo, sorgente, attive: bool, utente, negozio, chiave, fonte, co
         raise ErroreFlusso("Scegli la fonte di riferimento")
     if not (motivo or "").strip():
         raise ErroreFlusso("Scrivi il motivo")
+    if negozio not in {n.id for n in topo.negozi}:
+        raise ErroreFlusso("Scegli il negozio da rettificare")
+    if fonte == "conteggio" and not str(contati if contati is not None else "").strip():
+        raise ErroreFlusso("Scrivi quanti pezzi hai contato")
     canali = _leggi(c, topo, sorgente, negozio, chiave)
     if fonte == "principale":
         pr = next((x for x in canali if x["principale"]), None)
         if not pr or len(canali) < 2:
             raise ErroreFlusso("Servono il canale principale e almeno uno specchio")
         contati = pr["giacenza"]
-    contati = int(contati)
-    if contati < 0:
-        raise ErroreFlusso("I pezzi contati non possono essere negativi")
+    try:
+        contati = int(contati)
+    except (TypeError, ValueError):
+        raise ErroreFlusso("I pezzi contati devono essere un numero intero") from None
+    if not 0 <= contati <= MASSIMO_CONTATI:
+        raise ErroreFlusso(f"I pezzi contati vanno da 0 a {MASSIMO_CONTATI:,}".replace(",", "."))
     for x in canali:
         x["dopo"] = contati
         x["delta"] = contati - (x["giacenza"] or 0)

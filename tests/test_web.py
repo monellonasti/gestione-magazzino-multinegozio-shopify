@@ -257,3 +257,31 @@ def test_carico_da_fornitore_diviso_dalle_pagine(app, demo):
     porto_dopo = sum(r[0] for r in c.execute("SELECT disponibile FROM demo_varianti WHERE store='demo-porto'"))
     assert porto_dopo - porto_prima == sum(quote[1:])
     assert c.execute("SELECT esito FROM trasferimenti_shopify WHERE nome='#T0104'").fetchone()[0] == "diviso"
+
+
+def test_indirizzi_scritti_a_mano_non_danno_errori_del_server(app):
+    """Un numero di pagina troncato o un trasferimento che non esiste: pagina normale o messaggio, mai un errore 500."""
+    cl = entra(app, "responsabile")
+    for url in ("/inventario?pagina=abc", "/anomalie?pagina=x", "/storico?pagina=-"):
+        assert cl.get(url).status_code == 200, url
+    for url in ("/trasferimenti/9999/export.csv", "/trasferimenti/9999/stampa"):
+        r = cl.get(url)
+        assert r.status_code == 303 and "non+trovato" in r.headers["location"], url
+
+
+def test_moduli_con_numeri_non_validi(app):
+    """Chiusura di una differenza senza riga, soglie scritte a lettere: messaggio in italiano, niente errore del server."""
+    cl = entra(app, "responsabile")
+    pagina = cl.get("/trasferimenti/1").text
+    r = cl.post("/trasferimenti/1/differenza", data={"gettone": gettone(pagina), "esito": "perso"})
+    assert r.status_code == 409 and "Riga non indicata" in r.text
+    pagina = cl.get("/impostazioni").text
+    r = cl.post("/impostazioni/soglie", data={"gettone": gettone(pagina), "minima_centro": "uno", "obiettivo_centro": "2"})
+    assert r.status_code == 303 and "numeri+interi" in r.headers["location"]
+
+
+def test_stampa_con_le_stesse_firme_del_pdf(app):
+    cl = entra(app, "responsabile")
+    bozza = cl.get("/trasferimenti/4/stampa").text               # il 4 della demo è una bozza: si firma l'approvazione
+    assert "<span>Approvato da</span>" in bozza and "<span>Spedito il</span>" not in bozza
+    assert "<span>Ricevuto da</span>" in cl.get("/trasferimenti/1/stampa").text

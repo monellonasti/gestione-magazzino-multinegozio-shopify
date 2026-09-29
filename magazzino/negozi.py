@@ -67,17 +67,31 @@ def da_file(percorso) -> Topologia:
     p = Path(percorso)
     if not p.exists():
         raise ValueError(f"Manca {p.name}: copia negozi.example.json in {p.name} e metti i negozi veri (vedi docs/TECNICO.md)")
-    d = json.loads(p.read_text(encoding="utf-8"))
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{p.name} non è scritto bene (riga {e.lineno}, colonna {e.colno}): {e.msg}") from None
     negozi, nomi, domini = [], {}, {}
-    for n in d["negozi"]:
-        canali = tuple(Canale(ch["store"], ch["sede"], bool(ch.get("principale"))) for ch in n["canali"])
-        if sum(ch.principale for ch in canali) != 1:
-            raise ValueError(f"{p.name}: il negozio {n['nome']} deve avere un solo canale principale")
-        for ch in n["canali"]:
-            nomi[ch["store"]], domini[ch["store"]] = ch["nome"], tuple(ch["domini"])
-        negozi.append(Negozio(n["id"], n["nome"], canali))
+    try:
+        for n in d["negozi"]:
+            canali = tuple(Canale(ch["store"], ch["sede"], bool(ch.get("principale"))) for ch in n["canali"])
+            if sum(ch.principale for ch in canali) != 1:
+                raise ValueError(f"{p.name}: il negozio {n['nome']} deve avere un solo canale principale")
+            for ch in n["canali"]:
+                # uno stesso negozio Shopify in due posti manderebbe i movimenti al negozio fisico sbagliato
+                if ch["store"] in nomi:
+                    raise ValueError(f"{p.name}: il negozio Shopify {ch['store']!r} compare due volte")
+                dom = ch["domini"]
+                nomi[ch["store"]], domini[ch["store"]] = ch["nome"], (dom,) if isinstance(dom, str) else tuple(dom)
+            negozi.append(Negozio(n["id"], n["nome"], canali))
+    except KeyError as e:
+        raise ValueError(f"{p.name}: manca il campo {e.args[0]!r} (confrontalo con negozi.example.json)") from None
+    except (TypeError, AttributeError):
+        raise ValueError(f"{p.name}: la struttura non è quella di negozi.example.json") from None
     if len(negozi) != 2:
         raise ValueError(f"{p.name}: servono esattamente due negozi fisici")
+    if negozi[0].id == negozi[1].id:
+        raise ValueError(f"{p.name}: i due negozi fisici hanno lo stesso id {negozi[0].id!r}")
     return Topologia(tuple(negozi), nomi, domini)
 
 DEMO = Topologia(

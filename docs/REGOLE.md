@@ -55,7 +55,7 @@ Si sceglie il negozio da rifornire, quello di origine, e una di **due modalità 
 
 Il consumo di A è la somma delle vendite della cassa e del negozio online **evase dalla sede A**. Il periodo è a giorni interi, ora di Roma.
 
-**Periodi sovrapposti.** Ogni trasferimento di reintegro registra quali righe d'ordine copre (tabella `coperture`). Un'altra lista con un periodo che si sovrappone scala le unità già coperte, riga per riga. In pratica:
+**Periodi sovrapposti.** Ogni trasferimento di reintegro registra quali righe d'ordine copre (tabella `coperture`). Due «Crea bozza» partiti insieme da due pagine non coprono due volte la stessa vendita: la seconda bozza non nasce e si ricalcola. Un'altra lista con un periodo che si sovrappone scala le unità già coperte, riga per riga. In pratica:
 - se un trasferimento viene **annullato**, le vendite tornano scoperte;
 - se viene **approvato o spedito con meno pezzi**, restano coperte le vendite più vecchie e si liberano le più recenti.
 
@@ -133,7 +133,7 @@ Suggerisce il primo in quest'ordine. Con due negozi è quasi sempre l'altro, ma 
 
 - Il negozio Shopify dove è stato creato il trasferimento **non si tocca**: Shopify l'ha già scalato.
 - La spunta «scala anche l'altro canale» si toglie se lo stesso movimento è già stato fatto a mano anche lì. Se sull'altro canale c'è un trasferimento con gli stessi pezzi a pochi giorni di distanza, il programma lo segnala e toglie la spunta da solo.
-- Ogni trasferimento Shopify si decide **una volta sola**: il doppio clic e due persone insieme non producono un secondo carico.
+- Ogni trasferimento Shopify si decide **una volta sola**, e solo sulle righe che si sono viste: il doppio clic e due persone insieme non producono un secondo carico, e se nel frattempo una lettura da Shopify cambia le righe (altri pezzi spediti) la conferma non passa e si ricarica la pagina.
 - Le righe con una variante che il programma non conosce (non tracciata o sconosciuta) restano fuori e aprono un'anomalia da sistemare a mano. Lo stesso vale per un articolo che non esiste nel negozio di arrivo.
 - Sui negozi veri si considerano i trasferimenti creati **dal primo giorno di uso** (27/09/2026). Quelli di settembre erano già stati caricati con gli script: se la data si sposta indietro, vanno segnati «già gestito».
 
@@ -182,13 +182,17 @@ Le due scritture di un movimento (per esempio la cassa e il negozio online di A)
 2. **Prima di ogni scrittura** rilegge la giacenza. Uno scarico che la porterebbe sotto zero diventa **conflitto** e non parte.
 3. La scrittura usa `changeFromQuantity` e la chiave `@idempotent`, entrambe obbligatorie dall'API 2026-04. Se qualcuno ha venduto fra lettura e scrittura, Shopify rifiuta: il programma rilegge e riprova con una chiave nuova, fino a 3 volte.
 4. Lo stato «in corso» si salva **prima** della chiamata. Se il programma si ferma a metà, al riavvio l'operazione è **incerta**.
-5. Un esito **incerto** (nessuna risposta) si risolve ripetendo la **stessa** chiamata con la **stessa** chiave. Shopify ricorda le chiavi per 24 ore e non applica due volte. Oltre 23 ore l'operazione passa a **da verificare**: decide il responsabile guardando lo storico della giacenza su Shopify, con una nota obbligatoria.
+5. Un esito **incerto** (nessuna risposta) si risolve ripetendo la **stessa** chiamata con la **stessa** chiave. Shopify ricorda le chiavi per 24 ore e non applica due volte. Oltre 23 ore **dal primo invio di quella chiave** (i tentativi successivi non allungano la finestra) l'operazione passa a **da verificare**: decide il responsabile guardando lo storico della giacenza su Shopify, con una nota obbligatoria.
+   - Se la ripetizione riceve un errore che non dice niente sulla chiamata originale (rete, token, autorizzazione), l'operazione **resta incerta** e si ripete più tardi. Diventa «errore», e si può rifare con «Riprova», solo se Shopify elabora la ripetizione e la respinge: vuol dire che l'originale non era passata.
 6. Se riesce solo una delle due scritture (per esempio lo specchio non ha l'articolo), la riuscita resta. L'altra diventa un'anomalia «aggiornamento fallito», con i pulsanti *Riprova* e *Non serve più*.
 7. Doppio clic, pagina ricaricata, due persone insieme:
    - ogni modulo ha un gettone usa-e-getta;
    - ogni trasferimento ha un numero di versione, che cambia anche a ogni pezzo letto o scritto a mano: una conferma preparata prima di un'altra lettura viene rifiutata, e si scrive solo quello che l'anteprima ha mostrato;
    - ogni lettura del lettore ha un suo identificativo: se la rete cade e il browser la ripete, si conta una volta sola;
-   - ogni movimento ha una chiave unica.
+   - ogni movimento ha una chiave unica;
+   - ricezione e chiusura delle differenze ricontrollano i numeri dentro la transazione: due tablet che registrano lo stesso arrivo non caricano il doppio, e una differenza si chiude una volta sola.
+8. Con `SCRITTURE_SHOPIFY=0` nessuna scrittura parte, da nessun pulsante («Riprova» compreso): le operazioni già in coda restano in coda e partono quando le scritture si riaccendono.
+9. La lettura di un negozio dura anche mezzo minuto: gli articoli che il programma ha scritto su Shopify mentre si leggeva si rileggono prima di salvare, così la fotografia vecchia non cancella la scrittura appena fatta.
 
 ## Anomalie e rettifiche
 
@@ -203,12 +207,13 @@ Le due scritture di un movimento (per esempio la cassa e il negozio online di A)
 - **Anomalie operative**:
   - lettura di un negozio non riuscita;
   - scrittura non riuscita;
-  - differenza alla ricezione.
+  - differenza alla ricezione;
+  - movimento Shopify da sistemare a mano: cambiato su Shopify dopo la decisione, o con righe che il programma non riconosce.
 - **Rettifiche**:
   - servono una fonte esplicita, anteprima, motivo e conferma del responsabile, e restano nel registro con il prima e il dopo;
   - le fonti sono due: «conteggio fisico», con i pezzi contati, oppure «il canale principale è giusto», che allinea gli specchi;
   - la giacenza si rilegge alla conferma: se è cambiata dopo l'anteprima, la rettifica si annulla.
-- Si possono **ignorare in blocco**, con un solo motivo, le anomalie che di solito non vanno corrette (EAN mancante, manca sul negozio gemello, solo in un negozio). Ognuna resta nel registro, e un'anomalia ignorata non si riapre alla lettura successiva.
+- Si possono **ignorare in blocco**, con un solo motivo, le anomalie che di solito non vanno corrette (EAN mancante, manca sul negozio gemello, solo in un negozio). Ognuna resta nel registro, e un'anomalia ignorata non si riapre alla lettura successiva finché la condizione resta. Se la condizione sparisce l'anomalia si chiude; se un giorno torna (una giacenza di nuovo sotto zero) è un'anomalia nuova da guardare.
 - Il programma **non sceglie da solo** quale numero è giusto. Sui negozi veri le rettifiche restano spente finché non ci sono `SCRITTURE_SHOPIFY=1` e `RETTIFICHE=1`: fino ad allora confronta e segnala.
 
 ## Limiti noti

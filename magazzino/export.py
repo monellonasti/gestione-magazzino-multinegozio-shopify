@@ -11,7 +11,7 @@ import csv, io
 from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 PERICOLOSI = ("=", "+", "-", "@", "\t", "\r")

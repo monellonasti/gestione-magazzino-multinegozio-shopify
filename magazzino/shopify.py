@@ -7,13 +7,15 @@ diventa Incerta e la decide operazioni.py, ripetendola con la stessa chiave @ide
 
 Query validate sullo schema Admin API 2026-07.
 """
-import json, time, urllib.error, urllib.parse, urllib.request
+import http.client, json, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 
 from .config import leggi_env
 from .negozi import Conflitto, ErroreSorgente, Incerta, Rifiutata, Topologia
 
 Q_SEDI = "{ shop { name myshopifyDomain } locations(first: 50) { nodes { id name } } }"
+# errori di rete che urllib non avvolge in URLError: connessione chiusa a metà, risposta troncata o non JSON
+RETE = (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError)
 
 Q_CATALOGO = """query Catalogo($after: String, $loc: ID!) {
   productVariants(first: 100, after: $after) {
@@ -35,12 +37,29 @@ Q_VENDUTO = """query Venduto($after: String, $q: String!) {
   orders(first: 10, after: $after, query: $q, sortKey: UPDATED_AT) {
     pageInfo { hasNextPage endCursor }
     nodes {
-      id createdAt updatedAt cancelledAt test
+      id name createdAt updatedAt cancelledAt test
       retailLocation { id }
-      lineItems(first: 20) { nodes { id quantity currentQuantity variant { id } } }
-      fulfillmentOrders(first: 3) { nodes { assignedLocation { location { id } } lineItems(first: 20) { nodes { totalQuantity lineItem { id } } } } }
-      refunds(first: 5) { refundLineItems(first: 20) { nodes { quantity restockType lineItem { id } } } }
+      lineItems(first: 20) { pageInfo { hasNextPage } nodes { id quantity currentQuantity variant { id } } }
+      fulfillmentOrders(first: 3) { pageInfo { hasNextPage } nodes { assignedLocation { location { id } } lineItems(first: 20) { pageInfo { hasNextPage } nodes { totalQuantity lineItem { id } } } } }
+      refunds(first: 5) { refundLineItems(first: 20) { pageInfo { hasNextPage } nodes { quantity restockType lineItem { id } } } }
     }
+  }
+}"""
+
+# un ordine più grande di quanto legge Q_VENDUTO si rilegge da solo, con tutte le righe
+Q_ORDINE = """query Ordine($id: ID!, $righe: String) {
+  order(id: $id) {
+    id name createdAt updatedAt cancelledAt test
+    retailLocation { id }
+    lineItems(first: 100, after: $righe) { pageInfo { hasNextPage endCursor } nodes { id quantity currentQuantity variant { id } } }
+    fulfillmentOrders(first: 5) { pageInfo { hasNextPage } nodes { assignedLocation { location { id } } lineItems(first: 50) { pageInfo { hasNextPage } nodes { totalQuantity lineItem { id } } } } }
+    refunds(first: 10) { refundLineItems(first: 30) { pageInfo { hasNextPage } nodes { quantity restockType lineItem { id } } } }
+  }
+}"""
+
+Q_ORDINE_RIGHE = """query OrdineRighe($id: ID!, $righe: String) {
+  order(id: $id) {
+    lineItems(first: 100, after: $righe) { pageInfo { hasNextPage endCursor } nodes { id quantity currentQuantity variant { id } } }
   }
 }"""
 
@@ -68,10 +87,20 @@ Q_RIGHE_TRASFERIMENTO = """query RigheTrasferimento($id: ID!, $after: String) {
   }
 }"""
 
-Q_RICEVUTI = """query Ricevuti($id: ID!) {
+Q_RICEVUTI = """query Ricevuti($id: ID!, $after: String) {
   inventoryTransfer(id: $id) {
-    shipments(first: 10) {
-      nodes { id status lineItems(first: 100) { nodes { inventoryItem { id } acceptedQuantity rejectedQuantity } } }
+    shipments(first: 10, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { id status lineItems(first: 100) { pageInfo { hasNextPage endCursor } nodes { inventoryItem { id } acceptedQuantity rejectedQuantity } } }
+    }
+  }
+}"""
+
+Q_RIGHE_SPEDIZIONE = """query RigheSpedizione($id: ID!, $after: String) {
+  inventoryShipment(id: $id) {
+    lineItems(first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { inventoryItem { id } acceptedQuantity rejectedQuantity }
     }
   }
 }"""
@@ -113,7 +142,7 @@ class Client:
                 with urllib.request.urlopen(req, timeout=60) as r:
                     out = json.load(r)
                 break
-            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
+            except RETE as e:
                 if t == 3 or getattr(e, "code", 500) not in (429, 500, 502, 503, 504):
                     raise ErroreSorgente(f"{self.nome}: token non ottenuto ({getattr(e, 'code', type(e).__name__)})")
                 time.sleep(1.5 * 2 ** t)
@@ -130,18 +159,23 @@ class Client:
             headers={"Content-Type": "application/json", "X-Shopify-Access-Token": self.token()})
 
     def query(self, query: str, variables=None, tentativi=6) -> dict:
+        rinnovato = False
         for t in range(tentativi):
             try:
                 with urllib.request.urlopen(self._richiesta(query, variables, 120), timeout=120) as r:
                     out = json.load(r)
             except urllib.error.HTTPError as e:
+                if e.code == 401 and not rinnovato:          # token revocato o scaduto prima del previsto: se ne chiede uno nuovo
+                    self._tok, rinnovato = None, True
+                    continue
                 if e.code in (429, 500, 502, 503, 504) and t < tentativi - 1:
                     time.sleep(float(e.headers.get("Retry-After") or 1.5 * 2 ** t)); continue
                 raise ErroreSorgente(f"{self.nome}: HTTP {e.code}")
-            except (urllib.error.URLError, TimeoutError) as e:
+            except RETE as e:
+                # rete caduta, connessione chiusa a metà, risposta troncata: una lettura si può sempre ripetere
                 if t < tentativi - 1:
                     time.sleep(1.5 * 2 ** t); continue
-                raise ErroreSorgente(f"{self.nome}: rete non raggiungibile ({e})")
+                raise ErroreSorgente(f"{self.nome}: rete non raggiungibile ({type(e).__name__})")
             if out.get("errors"):
                 if "THROTTLED" in json.dumps(out["errors"]) and t < tentativi - 1:
                     time.sleep(1.0 + t); continue
@@ -153,7 +187,13 @@ class Client:
         raise ErroreSorgente(f"{self.nome}: troppi tentativi")
 
     def mutazione(self, query: str, variables: dict) -> dict:
-        """Una sola chiamata. Si ripete solo se Shopify dice chiaramente che non l'ha eseguita (429, THROTTLED)."""
+        """
+        Una sola chiamata. Si ripete solo se Shopify dice chiaramente che non l'ha eseguita (429, THROTTLED, 401 con
+        il token scaduto). Un 4xx o un errore GraphQL generale sono ErroreSorgente, non Rifiutata: dicono che QUESTA
+        richiesta non è passata, non che cosa è successo a un tentativo precedente con la stessa chiave. Rifiutata
+        resta per le risposte che Shopify ha elaborato (userErrors, in aggiusta).
+        """
+        rinnovato = False
         for t in range(5):
             try:
                 with urllib.request.urlopen(self._richiesta(query, variables, 60), timeout=60) as r:
@@ -161,10 +201,14 @@ class Client:
             except urllib.error.HTTPError as e:
                 if e.code == 429:
                     time.sleep(float(e.headers.get("Retry-After") or 2)); continue
+                if e.code == 401 and not rinnovato:          # non autenticata = non eseguita: con la stessa chiave si può ripetere
+                    self._tok, rinnovato = None, True
+                    continue
                 if e.code >= 500:
                     raise Incerta(f"{self.nome}: HTTP {e.code} senza esito")
-                raise Rifiutata(f"{self.nome}: HTTP {e.code}")
-            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                raise ErroreSorgente(f"{self.nome}: HTTP {e.code}")
+            except RETE as e:
+                # la richiesta è partita e la risposta si è persa o è arrivata a metà: l'esito non si sa
                 raise Incerta(f"{self.nome}: nessuna risposta ({type(e).__name__})")
             if out.get("errors"):
                 codici = {(x.get("extensions") or {}).get("code") for x in out["errors"]}
@@ -174,7 +218,7 @@ class Client:
                     raise Incerta(f"{self.nome}: la stessa operazione è ancora in corso su Shopify")
                 if "IDEMPOTENCY_PREVIOUS_ATTEMPT_FAILED" in codici:
                     raise Conflitto(f"{self.nome}: il tentativo precedente era fallito")
-                raise Rifiutata(f"{self.nome}: " + "; ".join(x.get("message", "?") for x in out["errors"])[:300])
+                raise ErroreSorgente(f"{self.nome}: " + "; ".join(x.get("message", "?") for x in out["errors"])[:300])
             return out["data"]
         raise Incerta(f"{self.nome}: Shopify ha rallentato la richiesta troppe volte")
 
@@ -198,6 +242,15 @@ def _riga_trasferimento(r: dict) -> dict:
     return {"line_id": r["id"], "titolo": r.get("title") or "", "item_id": ii.get("id"), "variant_id": v.get("id"),
             "sku": (ii.get("sku") or "").strip(), "ean": (v.get("barcode") or "").strip(),
             "totale": r["totalQuantity"], "spedita": r["shippedQuantity"]}
+
+
+def _troncato(o: dict, rimborsi: int) -> bool:
+    """L'ordine ha righe, evasioni o rimborsi oltre quelli letti (Shopify li darebbe in pagine successive)?"""
+    pagine = lambda conn: bool(((conn or {}).get("pageInfo") or {}).get("hasNextPage"))
+    fo = o.get("fulfillmentOrders") or {}
+    rf = o.get("refunds") or []
+    return (pagine(o.get("lineItems")) or pagine(fo) or any(pagine(x.get("lineItems")) for x in fo.get("nodes") or [])
+            or len(rf) >= rimborsi or any(pagine(x.get("refundLineItems")) for x in rf))
 
 
 def consumo_ordine(o: dict) -> list:
@@ -251,7 +304,7 @@ class SorgenteShopify:
         return {l["name"]: l["id"] for l in d["locations"]["nodes"]}
 
     PERMESSI = ("read_products", "read_inventory", "write_inventory", "read_locations", "read_orders",
-                "read_merchant_managed_fulfillment_orders")
+                "read_merchant_managed_fulfillment_orders", "read_inventory_transfers", "read_inventory_shipments")
 
     def verifica_permessi(self) -> dict:
         """Per ogni negozio: permessi che il programma usa e che l'app NON ha (lista vuota = tutto a posto)."""
@@ -293,7 +346,7 @@ class SorgenteShopify:
         while True:
             d = self.client[store].query(Q_VENDUTO, {"after": after, "q": q})["orders"]
             for o in d["nodes"]:
-                out += consumo_ordine(o)
+                out += consumo_ordine(self._ordine_completo(store, o) if _troncato(o, rimborsi=5) else o)
             if not d["pageInfo"]["hasNextPage"]:
                 return out
             after = d["pageInfo"]["endCursor"]
@@ -314,11 +367,7 @@ class SorgenteShopify:
                 righe = [_riga_trasferimento(r) for r in righe]
                 if t["origin"] is None and t["destination"]:
                     # carico senza origine (da fornitore): conta quello che Shopify ha accettato, spedizione per spedizione
-                    accettati = {}
-                    for sp in self.client[store].query(Q_RICEVUTI, {"id": t["id"]})["inventoryTransfer"]["shipments"]["nodes"]:
-                        for x in sp["lineItems"]["nodes"]:
-                            iid = (x.get("inventoryItem") or {}).get("id")
-                            accettati[iid] = accettati.get(iid, 0) + x["acceptedQuantity"]
+                    accettati = self._accettati(store, t["id"])
                     for r in righe:
                         r["ricevuta"] = accettati.pop(r["item_id"], 0)
                 out.append({"transfer_id": t["id"], "nome": t["name"], "stato": t["status"], "creato_il": t["dateCreated"],
@@ -330,6 +379,38 @@ class SorgenteShopify:
             if not d["pageInfo"]["hasNextPage"]:
                 return out
             after = d["pageInfo"]["endCursor"]
+
+    def _ordine_completo(self, store: str, o: dict) -> dict:
+        """Un ordine con più righe, evasioni o rimborsi di quanti ne legge l'elenco: si rilegge da solo, tutto."""
+        cl = self.client[store]
+        d = cl.query(Q_ORDINE, {"id": o["id"], "righe": None})["order"]
+        righe, pagina = d["lineItems"]["nodes"], d["lineItems"]["pageInfo"]
+        while pagina["hasNextPage"]:
+            x = cl.query(Q_ORDINE_RIGHE, {"id": o["id"], "righe": pagina["endCursor"]})["order"]["lineItems"]
+            righe, pagina = righe + x["nodes"], x["pageInfo"]
+        d["lineItems"] = {"nodes": righe, "pageInfo": {"hasNextPage": False}}
+        if _troncato(d, rimborsi=10):
+            # mai in silenzio: una vendita letta a metà sbaglierebbe il reintegro senza che nessuno se ne accorga
+            raise ErroreSorgente(f"{cl.nome}: l'ordine {o.get('name') or o['id']} ha più evasioni o rimborsi di quanti "
+                                 f"il programma ne sa leggere: le vendite di questo negozio non sarebbero complete")
+        return d
+
+    def _accettati(self, store: str, transfer_id: str) -> dict:
+        """Pezzi accettati per articolo in un carico: tutte le spedizioni, tutte le righe di ciascuna."""
+        cl, accettati, after = self.client[store], {}, None
+        while True:
+            sp = cl.query(Q_RICEVUTI, {"id": transfer_id, "after": after})["inventoryTransfer"]["shipments"]
+            for s in sp["nodes"]:
+                righe, pagina = s["lineItems"]["nodes"], s["lineItems"]["pageInfo"]
+                while pagina["hasNextPage"]:
+                    x = cl.query(Q_RIGHE_SPEDIZIONE, {"id": s["id"], "after": pagina["endCursor"]})["inventoryShipment"]["lineItems"]
+                    righe, pagina = righe + x["nodes"], x["pageInfo"]
+                for x in righe:
+                    iid = (x.get("inventoryItem") or {}).get("id")
+                    accettati[iid] = accettati.get(iid, 0) + (x.get("acceptedQuantity") or 0)
+            if not sp["pageInfo"]["hasNextPage"]:
+                return accettati
+            after = sp["pageInfo"]["endCursor"]
 
     def leggi_livelli(self, store: str, location_id: str, item_ids: list) -> dict:
         out = {}

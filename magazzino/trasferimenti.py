@@ -81,10 +81,27 @@ def crea(c, topo: Topologia, utente: str, origine: str, destinazione: str, tipo:
             for k in r.get("coperture") or []:
                 c.execute("INSERT INTO coperture(riga_id, store, riga_ordine, pezzi, data) VALUES(?,?,?,?,?)",
                           (rid, k["store"], k["riga_ordine"], k["pezzi"], k["data"]))
+        _controlla_coperture(c, {(k["store"], k["riga_ordine"]) for r in righe for k in r.get("coperture") or []})
         registra(c, utente, "trasferimento creato", codice, None,
                  {"origine": origine, "destinazione": destinazione, "tipo": tipo, "righe": len(righe),
                   "pezzi": sum(r["quantita"] for r in righe)})
     return tid
+
+
+def _controlla_coperture(c, vendite: set):
+    """
+    Dentro la transazione di crea, con le coperture nuove già scritte: nessuna vendita risulta coperta oltre i pezzi
+    venduti. Due «Crea bozza» partiti insieme da due pagine, calcolati sugli stessi numeri, altrimenti rimanderebbero
+    due volte la stessa vendita.
+    """
+    if not vendite:
+        return
+    from .calcoli import coperto_per_vendita
+    coperto = coperto_per_vendita(c)
+    for store, riga_ordine in vendite:
+        venduti = c.execute("SELECT pezzi FROM venduto WHERE store=? AND riga_ordine=?", (store, riga_ordine)).fetchone()
+        if venduti is not None and coperto.get((store, riga_ordine), 0) > venduti[0]:
+            raise ErroreFlusso("Nel frattempo un'altra lista ha già coperto alcune di queste vendite: ricalcola il reintegro")
 
 
 def modifica_bozza(c, utente, tid, versione, quantita: dict):
@@ -317,7 +334,8 @@ def ricevi(c, topo, scritture_attive: bool, utente, tid, ricevute: dict, nota: s
             raise ErroreFlusso("Quantità ricevute non valide")
         attesi = (r["spedita"] or 0) - r["ricevuta"] - r["danneggiata"]
         if buoni + danni > attesi:
-            raise ErroreFlusso(f"{r['prodotto']} {r['variante'] or ''}: ne mancano {attesi}, ne hai indicati {buoni + danni}")
+            raise ErroreFlusso(f"{r['prodotto']} {r['variante'] or ''}: " + ("ne manca 1" if attesi == 1 else f"ne mancano {attesi}")
+                               + f", ne hai indicati {buoni + danni}")
         if buoni or danni:
             eventi.append((rid, buoni, danni))
             if buoni:
@@ -325,11 +343,19 @@ def ricevi(c, topo, scritture_attive: bool, utente, tid, ricevute: dict, nota: s
     if not eventi:
         raise ErroreFlusso("Nessuna quantità ricevuta indicata")
     with transazione(c):
+        # i controlli qui sopra valgono per le righe lette prima: un arrivo registrato un attimo fa da un altro tablet
+        # li cambia. Con il blocco in scrittura già preso si rifanno sulla riga vera, prima di caricare qualcosa.
+        if c.execute("SELECT stato FROM trasferimenti WHERE id=?", (tid,)).fetchone()[0] != "spedito":
+            raise ErroreFlusso(f"Il trasferimento {t['codice']} è cambiato nel frattempo: ricarica la pagina")
         ids = []
         for rid, buoni, danni in eventi:
+            n = c.execute("UPDATE righe SET ricevuta=ricevuta+?, danneggiata=danneggiata+? WHERE id=? AND trasferimento_id=? "
+                          "AND COALESCE(spedita,0) - ricevuta - danneggiata >= ?", (buoni, danni, rid, tid, buoni + danni)).rowcount
+            if n != 1:
+                raise ErroreFlusso(f"{per_riga[rid]['prodotto']} {per_riga[rid]['variante'] or ''}: nel frattempo è stato registrato "
+                                   f"un altro arrivo. Ricarica la pagina: i numeri sono cambiati")
             ev = c.execute("INSERT INTO ricezioni(riga_id, buoni, danneggiati, nota, da, il) VALUES(?,?,?,?,?,?)",
                            (rid, buoni, danni, nota, utente, ora())).lastrowid
-            c.execute("UPDATE righe SET ricevuta=ricevuta+?, danneggiata=danneggiata+? WHERE id=?", (buoni, danni, rid))
             if buoni:
                 ids += _pianifica(c, t, movimenti(c, topo, t, {rid: buoni}, "carico", t["destinazione"]), "carico",
                                   t["destinazione"], f"ric{ev}")
@@ -360,6 +386,8 @@ def chiudi_ricezione(c, utente, tid, nota: str):
     if not (nota or "").strip():
         raise ErroreFlusso("Scrivi una nota: cosa manca e perché")
     with transazione(c):
+        t, righe = carica(c, tid)          # dentro la transazione: un arrivo registrato un attimo prima deve contare
+        _controlla(t, None, "spedito")
         c.execute("UPDATE trasferimenti SET note=TRIM(COALESCE(note,'') || char(10) || ?) WHERE id=?", (f"Ricezione chiusa: {nota}", tid))
         _chiudi_ricezione(c, t, righe, utente)
 
@@ -383,9 +411,11 @@ def chiudi_differenza(c, topo, scritture_attive: bool, utente, riga_id: int, esi
         raise ErroreFlusso("Le modifiche alle giacenze su Shopify sono disattivate: questa chiusura richiede un carico.")
     ids = []
     with transazione(c):
-        c.execute("UPDATE righe SET esito_differenza=?, differenza_chiusa_da=?, differenza_chiusa_il=?, "
-                  "motivo_differenza=TRIM(COALESCE(motivo_differenza,'') || ' ' || ?) WHERE id=?",
-                  (esito, utente, ora(), nota, riga_id))
+        n = c.execute("UPDATE righe SET esito_differenza=?, differenza_chiusa_da=?, differenza_chiusa_il=?, "
+                      "motivo_differenza=TRIM(COALESCE(motivo_differenza,'') || ' ' || ?) WHERE id=? AND esito_differenza IS NULL",
+                      (esito, utente, ora(), nota, riga_id)).rowcount
+        if n != 1:                          # chiusa un attimo fa da un'altra pagina: niente secondo carico
+            raise ErroreFlusso("Differenza già chiusa nel frattempo: ricarica la pagina")
         if esito == "rientrata_origine":
             ids = _pianifica(c, t, movimenti(c, topo, t, {riga_id: mancanti}, "rientro", t["origine"]), "rientro", t["origine"], "diff")
         elif esito == "arrivata_dopo":

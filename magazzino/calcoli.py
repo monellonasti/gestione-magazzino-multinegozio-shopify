@@ -168,13 +168,14 @@ def piano_bilanciamento(c, topo: Topologia, testo: str = "") -> list:
 
 def sotto_scorta(c, topo: Topologia) -> dict:
     """
-    Articoli sotto la scorta minima in ciascun negozio, contando quello che sta già arrivando. Solo articoli che
-    hanno merce in almeno un negozio: quelli a zero dappertutto sono da riordinare al fornitore, non da spostare.
+    Articoli sotto la scorta minima in ciascun negozio, contando quello che sta già arrivando, che l'ALTRO negozio
+    potrebbe coprire perché ne ha. Quelli senza merce altrove sono da riordinare al fornitore, non da spostare.
     """
     s, corso = soglie(c), in_corso(c)
     out = {n.id: 0 for n in topo.negozi}
     for r in c.execute("""SELECT n.chiave, n.negozio, n.disponibile FROM articolo_negozi n
-                          WHERE EXISTS(SELECT 1 FROM articolo_negozi m WHERE m.chiave=n.chiave AND m.disponibile > 0)"""):
+                          WHERE EXISTS(SELECT 1 FROM articolo_negozi m WHERE m.chiave=n.chiave AND m.negozio != n.negozio
+                                       AND m.disponibile > 0)"""):
         arrivo = corso[r["chiave"]]["arrivo"][r["negozio"]] if r["chiave"] in corso else 0
         if max(0, r["disponibile"] or 0) + arrivo < regole.soglia(s, r["negozio"], r["chiave"]).minima:
             out[r["negozio"]] += 1

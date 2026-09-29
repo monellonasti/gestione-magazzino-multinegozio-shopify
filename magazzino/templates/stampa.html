@@ -1,18 +1,19 @@
 <!doctype html>
 <html lang="it">
-<head><meta charset="utf-8"><title>{{ titolo }} {{ t.codice }}</title><link rel="stylesheet" href="/static/stile.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ titolo }} {{ t.codice }}</title><link rel="stylesheet" href="/static/stile.css"></head>
 <body class="stampa">
 {% if demo %}<p class="fascia-demo"><strong>DEMO</strong> dati inventati: non è un documento vero</p>{% endif %}
-<div class="solo-schermo"><button onclick="window.print()">Stampa</button> <a href="/trasferimenti/{{ t.id }}">Torna al trasferimento</a>
+<div class="solo-schermo"><button onclick="window.print()" data-stampa hidden>Stampa</button>
+  <script>document.querySelector("[data-stampa]").hidden = false</script> <a href="/trasferimenti/{{ t.id }}">Torna al trasferimento</a>
   <span>Righe in ordine di scaffale {{ "di arrivo" if t.stato in ('spedito', 'ricevuto') else "di prelievo" }}.</span></div>
 <h1>{{ titolo }} {{ t.codice }}</h1>
 <table class="intestazione">{% for k, v in testa %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}</table>
-<table class="lista">
+<div class="scorre-stampa"><table class="lista">
   <thead><tr><th class="spunta">✓</th><th>Prodotto</th><th>SKU</th><th>EAN</th><th>Scaffale</th><th class="num">Pezzi</th>{% if t.stato in ('spedito', 'ricevuto') %}<th class="num">Ricevuti</th>{% endif %}<th class="note">Note</th></tr></thead>
   <tbody>{% for r in righe %}<tr><td class="spunta">☐</td><td>{{ r.prodotto_var }}</td><td>{{ r.sku }}</td><td>{{ r.ean }}</td><td class="scaffale">{{ r.ubicazione }}</td>
     <td class="num"><strong>{{ r.quantita }}</strong></td>{% if t.stato in ('spedito', 'ricevuto') %}<td class="num"></td>{% endif %}<td class="note">{{ r.nota }}</td></tr>{% endfor %}</tbody>
-</table>
+</table></div>
 <p class="totali">{% for k, v in tot %}{{ k }}: <strong>{{ v }}</strong>&nbsp;&nbsp;&nbsp;{% endfor %}</p>
-<div class="firme"><span>Preparato da</span><span>Spedito il</span><span>Ricevuto da</span></div>
+<div class="firme">{% for f in firme %}<span>{{ f }}</span>{% endfor %}</div>
 </body>
 </html>

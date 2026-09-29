@@ -35,6 +35,17 @@ def _vero(v) -> bool:
     return str(v or "").strip().lower() in ("1", "si", "sì", "true", "yes", "on")
 
 
+def _intero(nome: str, valore, minimo: int, massimo: int) -> int:
+    """Un numero del .env: se non è valido il programma non parte, e dice quale riga correggere."""
+    try:
+        n = int(str(valore).strip())
+    except ValueError:
+        raise SystemExit(f"{nome} nel .env deve essere un numero intero, non {valore!r}") from None
+    if not minimo <= n <= massimo:
+        raise SystemExit(f"{nome} nel .env deve essere fra {minimo} e {massimo}, non {n}")
+    return n
+
+
 @dataclass
 class Config:
     modo: str = "demo"                      # "demo" oppure "reale"
@@ -74,10 +85,11 @@ def carica(modo: str | None = None, env_file: Path | None = None) -> Config:
     c = Config(
         modo=(modo or g("MODALITA", "demo")).strip().lower(),
         host=g("HOST", "0.0.0.0"),
-        porta=int(g("PORTA", 8000)),
+        porta=_intero("PORTA", g("PORTA", 8000), 1, 65535),
         scritture=_vero(g("SCRITTURE_SHOPIFY")),
         rettifiche=_vero(g("RETTIFICHE")),
-        sync_minuti=int(g("SYNC_MINUTI", 15)),
+        # con 0 o meno la lettura periodica ripartirebbe subito, di continuo, contro i limiti di Shopify
+        sync_minuti=_intero("SYNC_MINUTI", g("SYNC_MINUTI", 15), 1, 24 * 60),
         # percorsi relativi: rispetto alla cartella del programma, non a quella da cui lo si lancia
         env_negozi={chiave_env(k[4:]): (str((BASE / v).resolve()) if v and not Path(v).is_absolute() else v)
                     for k, v in e.items() if k.startswith("ENV_") and v},

@@ -23,7 +23,7 @@
 
 {#- quantità con − e + (tablet); senza JavaScript il campo resta scrivibile -#}
 {% macro passo_qta(nome, valore, massimo=none, minimo=0, etichetta="Quantità") -%}
-<span class="passo-qta"><button type="button" class="secondario" data-passo="-1" aria-label="Uno in meno" tabindex="-1">−</button><input class="qta" type="number" inputmode="numeric" name="{{ nome }}" value="{{ valore }}" min="{{ minimo }}"{% if massimo is not none %} max="{{ massimo }}"{% endif %} aria-label="{{ etichetta }}"><button type="button" class="secondario" data-passo="1" aria-label="Uno in più" tabindex="-1">+</button></span>
+<span class="passo-qta"><button type="button" class="secondario" data-passo="-1" aria-label="Uno in meno" tabindex="-1" data-solo-js hidden>−</button><input class="qta" type="number" inputmode="numeric" name="{{ nome }}" value="{{ valore }}" min="{{ minimo }}"{% if massimo is not none %} max="{{ massimo }}"{% endif %} aria-label="{{ etichetta }}"><button type="button" class="secondario" data-passo="1" aria-label="Uno in più" tabindex="-1" data-solo-js hidden>+</button></span>
 {%- endmacro %}
 
 {#- «Scarica»: stampa ed esportazioni in un solo menu -#}

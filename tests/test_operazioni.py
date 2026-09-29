@@ -5,7 +5,7 @@ import pytest
 
 from magazzino import operazioni, trasferimenti as T
 from magazzino.db import salva_impostazione
-from magazzino.negozi import DEMO
+from magazzino.negozi import DEMO, ErroreSorgente, Rifiutata
 from magazzino.sync import sincronizza
 
 from conftest import giacenza, metti_varianti
@@ -64,7 +64,11 @@ def test_incerta_oltre_la_finestra_va_verificata_a_mano(base):
     c, s, tid = base
     i = op(c, s, tid, "demo-centro", -3)
     vecchio = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat(timespec="seconds")
-    c.execute("UPDATE operazioni SET stato='incerta', chiave_shopify='k1-t1', change_from=10, aggiornata_il=? WHERE id=?", (vecchio, i))
+    adesso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # la chiave è partita 30 ore fa; l'ultimo tentativo (anch'esso incerto) è di adesso: la finestra non si allunga,
+    # Shopify la chiave l'ha già dimenticata
+    c.execute("UPDATE operazioni SET stato='incerta', chiave_shopify='k1-t1', change_from=10, chiave_dal=?, aggiornata_il=? "
+              "WHERE id=?", (vecchio, adesso, i))
     assert operazioni.esegui(c, s, i) == "da_verificare"
     assert giacenza(c, "demo-centro", 1) == 10        # nessuna scrittura alla cieca
     with pytest.raises(ValueError):
@@ -112,3 +116,38 @@ def test_chiave_riusata_con_dati_diversi_rifiutata(base):
     with pytest.raises(Rifiutata, match="IDEMPOTENCY"):
         s.aggiusta("demo-centro", "loc-centro-cassa", "demo-centro/i1", -2, 9, "movement_created", "doc", "stessa")
     assert giacenza(c, "demo-centro", 1) == 9
+
+
+class _Sostituta:
+    """Sorgente che per le scritture risponde come vogliamo e per le letture chiede ai negozi finti."""
+    def __init__(self, vera, errore):
+        self.topo, self._vera, self._errore = vera.topo, vera, errore
+
+    def aggiusta(self, *a, **k):
+        raise self._errore
+
+    def leggi_livelli(self, *a, **k):
+        return self._vera.leggi_livelli(*a, **k)
+
+
+def test_incerta_con_un_errore_generico_resta_incerta(base):
+    # la ripetizione con la stessa chiave non ottiene il token: dell'originale non si sa nulla. Se diventasse «errore»,
+    # «Riprova» la riscriverebbe con una chiave nuova e lo scarico passerebbe due volte
+    c, s, tid = base
+    salva_impostazione(c, "demo_incerte", 1)          # la scrittura passa ma la risposta si perde
+    i = op(c, s, tid, "demo-centro", -3)
+    assert operazioni.esegui(c, s, i) == "incerta" and giacenza(c, "demo-centro", 1) == 7
+    assert operazioni.esegui(c, _Sostituta(s, ErroreSorgente("Centro (cassa): token non ottenuto (401)")), i) == "incerta"
+    with pytest.raises(ValueError):
+        operazioni.decidi(c, "anna", i, "riprova", "riprovo")      # su un'incerta «Riprova» non c'è
+    assert operazioni.esegui(c, s, i) == "fatta"                   # torna la rete: stessa chiave, nessun secondo scarico
+    assert giacenza(c, "demo-centro", 1) == 7
+
+
+def test_incerta_respinta_da_shopify_diventa_errore(base):
+    # una risposta elaborata (userErrors) con la stessa chiave dice che l'originale non era passata
+    c, s, tid = base
+    i = op(c, s, tid, "demo-centro", -3)
+    c.execute("UPDATE operazioni SET stato='incerta', chiave_shopify='k1-t1', change_from=10, chiave_dal=? WHERE id=?",
+              (datetime.now(timezone.utc).isoformat(timespec="seconds"), i))
+    assert operazioni.esegui(c, _Sostituta(s, Rifiutata("ITEM_NOT_STOCKED_AT_LOCATION")), i) == "errore"

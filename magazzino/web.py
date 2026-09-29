@@ -2,7 +2,7 @@
 Le pagine. Tutto è generato dal server: il browser riceve solo quello che il ruolo può vedere (il magazziniere
 non riceve mai venduto, prezzi o dati degli ordini, nemmeno in campi nascosti).
 """
-import json, re, urllib.parse
+import hmac, json, re, secrets, urllib.parse
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +28,7 @@ TIPI_ANOMALIA = {"sincronizzazione": "Lettura non riuscita", "aggiornamento_fall
                  "differenza_ricezione": "Differenza alla ricezione", "quantita_incoerente": "Disponibilità negativa",
                  "ean_doppio": "EAN doppio", "associazione_ambigua": "Da collegare a mano", "ean_mancante": "EAN mancante",
                  "canali_non_allineati": "Cassa e online diversi", "specchio_mancante": "Manca sul negozio gemello",
+                 "shopify_a_mano": "Movimento Shopify da sistemare a mano",
                  "solo_un_negozio": "Solo in un negozio",
                  "trasferimento_senza_destinazione": "Uscita Shopify senza destinazione", "carico_fornitore": "Arrivo dal fornitore"}
 COSA_FARE = {
@@ -43,6 +44,8 @@ COSA_FARE = {
                             "(vince la più bassa se giustificata da ordini, il resto a mano).",
     "specchio_mancante": "Ha merce ma non esiste sul negozio gemello: va creato nel catalogo online, oppure si ignora con un motivo.",
     "solo_un_negozio": "Di solito è un assortimento diverso: si ignora in blocco con un motivo. Se è lo stesso articolo, collegalo a mano.",
+    "shopify_a_mano": "Un movimento fatto su Shopify è cambiato dopo la decisione, o ha righe che il programma non riconosce: "
+                      "sistema a mano le giacenze su Shopify, poi ignora l'anomalia scrivendo cosa hai fatto.",
 }
 IN_BLOCCO = ("ean_mancante", "specchio_mancante", "solo_un_negozio")
 
@@ -100,6 +103,42 @@ def aperto(t):
 
 def plurale(n, singolare, plurale_):
     return f"{n} {singolare if n == 1 else plurale_}"
+
+
+def percorso_locale(url, altrimenti="/") -> str:
+    """Dove tornare dopo un'azione: solo pagine di questo programma («/…»), mai un altro sito."""
+    url = str(url or "")
+    return url if url.startswith("/") and not url.startswith(("//", "/\\")) else altrimenti
+
+
+AVVISI = ("msg", "tono", "firma")
+
+
+def senza_avvisi(percorso: str, query: str) -> str:
+    """Un indirizzo del programma senza l'avviso dell'ultima azione: tornandoci, l'avviso non si ripete."""
+    q = urllib.parse.urlencode([(k, v) for k, v in urllib.parse.parse_qsl(query, keep_blank_values=True) if k not in AVVISI])
+    return percorso + (f"?{q}" if q else "")
+
+
+def pagina_corrente(request) -> str:
+    """
+    Dove tornare restando su questa pagina. Una pagina nata da un modulo inviato (un'anteprima, un errore) non si
+    riapre con un link, che risponderebbe «Method Not Allowed»: si torna a quella da cui è partito il modulo.
+    """
+    if request.method == "GET":
+        return senza_avvisi(request.url.path, request.url.query)
+    ref = urllib.parse.urlsplit(request.headers.get("referer") or "")
+    if ref.netloc == request.url.netloc and ref.path.startswith("/"):
+        return senza_avvisi(ref.path, ref.query)
+    return "/"
+
+
+def numero_pagina(valore) -> int:
+    """Il numero di pagina dall'indirizzo: un valore scritto a mano o troncato riporta alla prima pagina."""
+    try:
+        return max(1, int(valore or 1))
+    except ValueError:
+        return 1
 
 
 def voci_menu(u, conteggi, percorso):
@@ -175,6 +214,20 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
                            OP_PROBLEMI=OP_PROBLEMI, plurale=plurale, quando=quando, giorno=giorno)
     tpl.env.filters["q"] = lambda d: urllib.parse.urlencode({k: v for k, v in d.items() if v not in (None, "")})
     tpl.env.filters["fromjson"] = json.loads
+    # i messaggi dopo un'azione viaggiano nell'indirizzo: firmati, così un link scritto da altri non può far comparire
+    # un falso avviso del programma. Il segreto cambia a ogni avvio (un messaggio vive solo il tempo di un redirect)
+    segreto_messaggi = secrets.token_bytes(16)
+
+    def firma_messaggio(msg, tipo):
+        return hmac.new(segreto_messaggi, f"{tipo}|{msg}".encode(), "sha256").hexdigest()[:20]
+
+    @app.middleware("http")
+    async def niente_cache(request, call_next):
+        r = await call_next(request)
+        # tablet condivisi: dopo «Esci» il tasto Indietro non deve mostrare le pagine (e i numeri) di chi c'era prima
+        if not request.url.path.startswith(("/static/", "/demo/img/")):
+            r.headers.setdefault("Cache-Control", "no-store")
+        return r
 
     # ------------------------------------------------------------------------------------------- utilità
 
@@ -189,19 +242,23 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
     def utente(request, c, ruolo=None):
         u = auth.utente_da_token(c, request.cookies.get("sessione"))
         if not u:
-            raise Rimanda("/login?" + urllib.parse.urlencode({"dopo": str(request.url.path)}))
+            # dopo l'accesso si torna alla stessa pagina, con i suoi parametri (non all'indirizzo di un modulo)
+            raise Rimanda("/login?" + urllib.parse.urlencode({"dopo": pagina_corrente(request)}))
         if ruolo and u["ruolo"] != ruolo:
             raise Vietato()
         return u
 
     def resp(request, c, u, nome, http=200, **kw):
         sess = request.cookies.get("sessione") or ""
+        msg, tipo_msg = request.query_params.get("msg"), request.query_params.get("tono", "ok")
+        if msg and not hmac.compare_digest(request.query_params.get("firma", ""), firma_messaggio(msg, tipo_msg)):
+            msg = None                               # scritto a mano in un link: non è un avviso del programma
         ctx = {"request": request, "u": u, "demo": cfg.demo, "topo": S.topo, "negozi": S.topo.negozi,
                "nome_negozio": {n.id: n.nome for n in S.topo.negozi}, "nomi_store": S.topo.nomi_store,
                "gettone": lambda: auth.gettone(sess), "scritture": cfg.scritture_attive, "rettifiche_attive": cfg.rettifiche_attive,
-               "msg": request.query_params.get("msg"), "tipo_msg": request.query_params.get("tipo", "ok"),
+               "msg": msg, "tipo_msg": tipo_msg,
                "sync": stato_sync(c), "responsabile": u is not None and u["ruolo"] == "responsabile",
-               "errore_config": S.errore_config, **kw}
+               "errore_config": S.errore_config, "qui": pagina_corrente(request), "pagina_get": request.method == "GET", **kw}
         if u is not None:
             ctx["conta_menu"] = compiti.conteggi_menu(c, u["ruolo"])
             ctx["menu"], ctx["menu_extra"] = voci_menu(u, ctx["conta_menu"], request.url.path)
@@ -210,9 +267,18 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
     def vai(url, msg=None, tipo="ok"):
         if msg:
             url, _, frammento = url.partition("#")
-            url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"msg": msg, "tipo": tipo})
+            url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"msg": msg, "tono": tipo,
+                                                                          "firma": firma_messaggio(msg, tipo)})
             url += f"#{frammento}" if frammento else ""
         return RedirectResponse(url, status_code=303)
+
+    def avvia_scritture(tid=None) -> bool:
+        """Fa partire gli aggiornamenti Shopify in coda. Con le scritture spente (SCRITTURE_SHOPIFY=0) restano in coda:
+        l'interruttore vale per ogni pulsante, non solo per la lettura periodica."""
+        if not (S.sorgente and cfg.scritture_attive):
+            return False
+        operazioni.avvia_in_sottofondo(cfg.db_path, S.sorgente, tid)
+        return True
 
     def modulo_valido(request, c, form) -> bool:
         """Firma del gettone (richiesta da questa pagina) e uso singolo (niente doppio clic)."""
@@ -272,14 +338,14 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
     async def login_post(request: Request):
         form = await request.form()
         with db() as c:
-            token = auth.accedi(c, form.get("username"), form.get("password"))
+            indirizzo = request.client.host if request.client else ""
+            token = auth.accedi(c, form.get("username"), form.get("password"), indirizzo)
             if not token:
-                errore = ("Troppi tentativi: riprova fra 10 minuti." if auth.bloccato(form.get("username"))
+                errore = ("Troppi tentativi: riprova fra 10 minuti." if auth.bloccato(form.get("username"), indirizzo)
                           else "Nome utente o password non corretti.")
                 return resp(request, c, None, "login.html", http=401, errore=errore, utenti_demo=UTENTI_DEMO if cfg.demo else [],
                             password_demo=PASSWORD_DEMO, dopo=form.get("dopo") or "/")
-        dopo = form.get("dopo") or "/"
-        r = RedirectResponse(dopo if dopo.startswith("/") and not dopo.startswith("//") else "/", status_code=303)
+        r = RedirectResponse(percorso_locale(form.get("dopo")), status_code=303)
         r.set_cookie("sessione", token, httponly=True, samesite="lax", max_age=12 * 3600)
         return r
 
@@ -321,12 +387,15 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
     async def sincronizza_ora(request: Request):
         form = await request.form()
         with db() as c:
-            utente(request, c)
+            u = utente(request, c)
             modulo_valido(request, c, form)
         if not S.pianificatore:
-            return vai(form.get("torna") or "/", S.errore_config or "Sincronizzazione non disponibile", "errore")
+            # il percorso del file credenziali lo vede solo il responsabile
+            testo = ((S.errore_config or "Lettura dei negozi non disponibile") if u["ruolo"] == "responsabile"
+                     else "Lettura dei negozi non disponibile: avvisa il responsabile")
+            return vai(percorso_locale(form.get("torna")), testo, "errore")
         S.pianificatore.richiedi()
-        return vai(form.get("torna") or "/", "Lettura avviata: i dati si aggiornano fra poco")
+        return vai(percorso_locale(form.get("torna")), "Lettura avviata: i dati si aggiornano fra poco")
 
     @app.get("/stato-sync")
     def stato_sync_json(request: Request):
@@ -391,8 +460,10 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
 
     def chiavi_sotto_scorta(c, negozio=""):
         s, corso, out = calcoli.soglie(c), calcoli.in_corso(c), []
+        # come il conteggio di «Da fare»: sotto la minima e l'altro negozio ne ha (si può spostare)
         for r in c.execute("""SELECT n.chiave, n.negozio, n.disponibile FROM articolo_negozi n WHERE EXISTS(
-                              SELECT 1 FROM articolo_negozi m WHERE m.chiave=n.chiave AND m.disponibile > 0)"""):
+                              SELECT 1 FROM articolo_negozi m WHERE m.chiave=n.chiave AND m.negozio != n.negozio
+                              AND m.disponibile > 0)"""):
             if negozio and r["negozio"] != negozio:
                 continue
             arrivo = corso[r["chiave"]]["arrivo"][r["negozio"]] if r["chiave"] in corso else 0
@@ -403,7 +474,7 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
     @app.get("/inventario", response_class=HTMLResponse)
     def inventario(request: Request):
         p = dict(request.query_params)
-        pagina = max(1, int(p.get("pagina") or 1))
+        pagina = numero_pagina(p.get("pagina"))
         with db() as c:
             u = utente(request, c)
             totale, righe = query_inventario(c, p, PER_PAGINA, (pagina - 1) * PER_PAGINA)
@@ -502,7 +573,8 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
             pagina = resp(request, c, u, "reintegro.html", par=par, piano=piano, errore=errore,
                           da_fare=[r for r in piano or [] if r["quantita"] > 0],
                           non_coperti=[r for r in piano or [] if r["quantita"] == 0],
-                          scorciatoie=[(n, (oggi - timedelta(days=n)).isoformat(), oggi.isoformat()) for n in (7, 14, 30)])
+                          scorciatoie=[(n, (oggi - timedelta(days=n)).isoformat(), oggi.isoformat()) for n in (7, 14, 30)],
+                          oggi=oggi.isoformat(), primo_giorno=(oggi - timedelta(days=60)).isoformat())
         if "calcola" in p and not errore:
             # la direzione usata resta proposta la volta dopo, su questo dispositivo
             pagina.set_cookie("reintegro_direzione", par["direzione"], max_age=180 * 86400, httponly=True, samesite="lax")
@@ -738,8 +810,8 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
         except T.ErroreFlusso as e:
             return scheda_carico(request, c, u, da_shopify.carica_ts(c, ts["store"], ts["numero"]), http=409, form=form,
                                  errore=str(e), dettagli=e.dettagli)
-        if ids and S.sorgente:
-            operazioni.avvia_in_sottofondo(cfg.db_path, S.sorgente)
+        if ids:
+            avvia_scritture()
         if tid:
             return vai(f"/trasferimenti/{tid}", "Carico ripartito: la quota per l'altro negozio è questo trasferimento")
         return vai(url, "Carico registrato" + (": duplicazione sugli altri canali in corso" if ids else ""))
@@ -754,8 +826,8 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
         altri_canali = [ch for ch in origine.canali if ch.store != store]
         # stesso movimento fatto a mano anche sull'altro canale? stessi pezzi, entro due giorni
         doppi = [x for x in c.execute("""SELECT nome, store, creato_il, pezzi FROM trasferimenti_shopify
-                     WHERE store != ? AND pezzi = ? AND ABS(julianday(creato_il) - julianday(?)) <= 2""",
-                                      (store, ts["pezzi"], ts["creato_il"]))
+                     WHERE store != ? AND verso = ? AND pezzi = ? AND ABS(julianday(creato_il) - julianday(?)) <= 2""",
+                                      (store, ts["verso"], ts["pezzi"], ts["creato_il"]))
                  if x["store"] in [ch.store for ch in altri_canali]]
         collegato = T.carica(c, ts["trasferimento_id"])[0] if ts["trasferimento_id"] else None
         return resp(request, c, u, "shopify_dettaglio.html", http=http, ts=ts, righe=righe, candidati=cand,
@@ -780,8 +852,11 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
         url = f"/trasferimenti/shopify/{store}/{numero}"
         with db() as c:
             u = utente(request, c)
-            if not modulo_valido(request, c, form):
-                return vai(url, "Azione già eseguita (doppio clic?): ecco lo stato attuale", "info")
+            if form.get("conferma") == "1":
+                if not modulo_valido(request, c, form):
+                    return vai(url, "Questa scelta era già stata inviata: ecco lo stato attuale", "info")
+            elif not auth.gettone_valido(request.cookies.get("sessione") or "", form.get("gettone") or ""):
+                raise Vietato()                  # anteprima o ricalcolo: nessuna scrittura, il gettone resta buono
             try:
                 ts = da_shopify.carica_ts(c, store, numero)
             except T.ErroreFlusso as e:
@@ -804,8 +879,8 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
                                              scelta, scala, subito, nota)
             except T.ErroreFlusso as e:
                 return shopify_scheda(request, c, u, store, numero, http=409, errore=str(e), dettagli=e.dettagli)
-        if ids and S.sorgente:
-            operazioni.avvia_in_sottofondo(cfg.db_path, S.sorgente)
+        if ids:
+            avvia_scritture()
         if tid:
             return vai(f"/trasferimenti/{tid}", "Destinazione registrata: giacenze in aggiornamento su Shopify")
         return vai(url, "Decisione registrata" + (": altri canali in aggiornamento" if ids else ""))
@@ -947,15 +1022,21 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
         return vai(f"{url}#righe", "Numeri salvati")
 
     def _azione(request, tid, azione, form):
-        solo_responsabile = {"modifica", "approva", "annulla", "differenza"}
+        solo_responsabile = {"modifica", "approva", "annulla", "differenza", "riprendi"}
         with db() as c:
             u = utente(request, c, "responsabile" if azione in solo_responsabile else None)
             url = f"/trasferimenti/{tid}"
             if azione in ("scansiona", "preleva"):
                 return _prelievo(request, c, u, tid, azione, form)
-            if not modulo_valido(request, c, form):
-                return vai(url, "Azione già eseguita (doppio clic?): ecco lo stato attuale", "info")
+            if azione in ("spedisci", "ricevi") and (form.get("conferma") != "1" or form.get("indietro") == "1"):
+                # anteprima e «Torna indietro» non scrivono niente: il gettone si controlla ma non si consuma, così
+                # ricaricare un'anteprima non risponde «già eseguita». Si consuma alla conferma, l'azione vera
+                if not auth.gettone_valido(request.cookies.get("sessione") or "", form.get("gettone") or ""):
+                    raise Vietato()
+            elif not modulo_valido(request, c, form):
+                return vai(url, "Questa azione era già stata inviata: ecco lo stato attuale", "info")
             nome, versione = u["username"], form.get("versione")
+            scritti = None                     # i numeri scritti nel modulo: tornano nella pagina se c'è un errore
             try:
                 if azione == "modifica":
                     T.modifica_bozza(c, nome, tid, versione, _interi(form, "q_"))
@@ -971,6 +1052,9 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
                     for rid, q in _interi(form, "p_").items():
                         T.preleva(c, nome, tid, rid, q)
                     spedite, motivo = _interi(form, "s_"), (form.get("motivo") or "").strip()
+                    scritti = {"motivo": motivo}
+                    if form.get("indietro") == "1":
+                        return dettaglio(request, c, u, tid, scritti=scritti)
                     if form.get("conferma") != "1":
                         t, righe = T.carica(c, tid)
                         q = {r["id"]: spedite.get(r["id"], r["prelevata"] or 0) for r in righe}
@@ -979,26 +1063,33 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
                         parziali = [r for r in righe if q[r["id"]] < (r["approvata"] or 0)]
                         if parziali and not motivo:
                             mancano = sum((r["approvata"] or 0) - q[r["id"]] for r in parziali)
-                            raise T.ErroreFlusso(f"Mancano {mancano} pezzi rispetto all'approvato: scrivi perché, poi ricontrolla",
+                            raise T.ErroreFlusso(("Manca 1 pezzo" if mancano == 1 else f"Mancano {mancano} pezzi") + " rispetto all'approvato: scrivi perché, poi ricontrolla",
                                                  [f"{r['prodotto']} {r['variante'] or ''}: {q[r['id']]} di {r['approvata']}" for r in parziali])
                         movs = T.movimenti(c, S.topo, t, q, "scarico", t["origine"])
                         # le quantità dell'anteprima viaggiano nel modulo di conferma: si spedisce esattamente questo
                         return dettaglio(request, c, u, tid, anteprima={"azione": "spedisci", "valori": q, "motivo": motivo,
                                          **raggruppa(movs, t["origine"])})
                     T.spedisci(c, S.topo, S.sorgente, cfg.scritture_attive, nome, tid, versione, spedite, motivo)
-                    operazioni.avvia_in_sottofondo(cfg.db_path, S.sorgente, tid)
+                    avvia_scritture(tid)
                     return vai(url, "Spedito. Shopify si aggiorna in pochi secondi: l'esito è qui sotto.")
                 if azione == "ricevi":
                     buoni, danni = _interi(form, "b_"), _interi(form, "d_")
+                    scritti = {"b": buoni, "d": danni, "nota": form.get("nota", "")}
+                    if form.get("indietro") == "1":          # dall'anteprima: il modulo con i numeri scritti, da correggere
+                        return dettaglio(request, c, u, tid, scritti=scritti)
                     ricevute = {rid: (buoni.get(rid, 0), danni.get(rid, 0)) for rid in set(buoni) | set(danni)}
                     if form.get("conferma") != "1":
                         t, righe = T.carica(c, tid)
                         per_riga = {r["id"]: r for r in righe}
+                        if any(rid not in per_riga for rid in ricevute):
+                            raise T.ErroreFlusso("Righe che non sono di questo trasferimento: ricarica la pagina")
                         for rid, (b, d) in ricevute.items():         # stesso controllo del server, prima dell'anteprima
                             r = per_riga.get(rid)
-                            if r and b + d > (r["spedita"] or 0) - r["ricevuta"] - r["danneggiata"]:
-                                raise T.ErroreFlusso(f"{r['prodotto']} {r['variante'] or ''}: ne mancano "
-                                                     f"{(r['spedita'] or 0) - r['ricevuta'] - r['danneggiata']}, ne hai indicati {b + d}")
+                            attesi = (r["spedita"] or 0) - r["ricevuta"] - r["danneggiata"] if r else 0
+                            if r and b + d > attesi:
+                                raise T.ErroreFlusso(f"{r['prodotto']} {r['variante'] or ''}: "
+                                                     + ("ne manca 1" if attesi == 1 else f"ne mancano {attesi}")
+                                                     + f", ne hai indicati {b + d}")
                         if not any(b or d for b, d in ricevute.values()):
                             raise T.ErroreFlusso("Nessun pezzo indicato come arrivato")
                         movs = T.movimenti(c, S.topo, t, {k: v[0] for k, v in ricevute.items()}, "carico", t["destinazione"])
@@ -1006,23 +1097,30 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
                             "azione": "ricevi", "valori_b": buoni, "valori_d": danni, "nota": form.get("nota", ""),
                             "danneggiati": sum(v[1] for v in ricevute.values()), **raggruppa(movs, t["destinazione"])})
                     T.ricevi(c, S.topo, cfg.scritture_attive, nome, tid, ricevute, form.get("nota", ""))
-                    operazioni.avvia_in_sottofondo(cfg.db_path, S.sorgente, tid)
+                    avvia_scritture(tid)
                     return vai(url, "Arrivo registrato. Shopify si aggiorna in pochi secondi.")
                 if azione == "chiudi-ricezione":
                     T.chiudi_ricezione(c, nome, tid, form.get("nota", ""))
                     return vai(url, "Ricezione chiusa: le differenze passano al responsabile")
                 if azione == "differenza":
-                    T.chiudi_differenza(c, S.topo, cfg.scritture_attive, nome, int(form.get("riga")), form.get("esito"), form.get("nota", ""))
-                    operazioni.avvia_in_sottofondo(cfg.db_path, S.sorgente, tid)
+                    riga = str(form.get("riga") or "")
+                    if not riga.isdigit():
+                        raise T.ErroreFlusso("Riga non indicata: ricarica la pagina e riprova")
+                    di = c.execute("SELECT trasferimento_id FROM righe WHERE id=?", (int(riga),)).fetchone()
+                    if not di or di[0] != tid:
+                        raise T.ErroreFlusso("Questa riga non è di questo trasferimento: ricarica la pagina")
+                    T.chiudi_differenza(c, S.topo, cfg.scritture_attive, nome, int(riga), form.get("esito"), form.get("nota", ""))
+                    avvia_scritture(tid)
                     return vai(url + "#differenze", "Differenza chiusa")
                 if azione == "annulla":
                     T.annulla(c, nome, tid, versione, form.get("motivo", ""))
                     return vai(url, "Trasferimento annullato: i pezzi prenotati tornano liberi")
                 if azione == "riprendi":
-                    operazioni.avvia_in_sottofondo(cfg.db_path, S.sorgente, tid)
+                    if not avvia_scritture(tid):
+                        return vai(url, "Le scritture su Shopify sono spente: gli aggiornamenti restano in coda", "info")
                     return vai(url, "Aggiornamenti ripresi")
             except T.ErroreFlusso as e:
-                return dettaglio(request, c, u, tid, http=409, errore=str(e), dettagli=e.dettagli)
+                return dettaglio(request, c, u, tid, http=409, errore=str(e), dettagli=e.dettagli, scritti=scritti)
         return Response("Azione sconosciuta", status_code=404)
 
     def _q_doc(t, r):
@@ -1051,12 +1149,15 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
     def trasferimento_export(request: Request, tid: int, formato: str):
         with db() as c:
             utente(request, c)
-            t, titolo, righe, testa, tot = _documento_trasferimento(c, tid)
+            try:
+                t, titolo, righe, testa, tot = _documento_trasferimento(c, tid)
+            except T.ErroreFlusso:
+                return vai("/trasferimenti", "Trasferimento non trovato", "errore")
         col = [("prodotto", "Prodotto"), ("variante", "Variante"), ("sku", "SKU"), ("ean", "EAN"), ("ubicazione", "Ubicazione"),
                ("quantita", "Quantità"), ("da", "Origine"), ("a", "Destinazione"), ("nota", "Note operative"),
                ("spunta", "Controllato (✓)"), ("annotazioni", "Annotazioni")]
         pdf_col = list(PDF_LISTA)
-        firme = ("Preparato da", "Spedito il", "Ricevuto da") if t["stato"] not in ("bozza",) else ("Approvato da",)
+        firme = _firme(t)
         if t["stato"] in ("spedito", "ricevuto"):
             pdf_col = PDF_LISTA[:5] + [("quantita", "Sped.", 12, "c"), ("_note", "Ric.", 12, "c"), ("_note", "Note", 22, "l")]
         return _file(formato, t["codice"], col, righe, testa, tot, titolo, pdf_col, firme, t["codice"])
@@ -1065,8 +1166,11 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
     def trasferimento_stampa(request: Request, tid: int):
         with db() as c:
             u = utente(request, c)
-            t, titolo, righe, testa, tot = _documento_trasferimento(c, tid)
-            return resp(request, c, u, "stampa.html", titolo=titolo, righe=righe, testa=testa, tot=tot, t=t)
+            try:
+                t, titolo, righe, testa, tot = _documento_trasferimento(c, tid)
+            except T.ErroreFlusso:
+                return vai("/trasferimenti", "Trasferimento non trovato", "errore")
+            return resp(request, c, u, "stampa.html", titolo=titolo, righe=righe, testa=testa, tot=tot, t=t, firme=_firme(t))
 
     # ------------------------------------------------------------------------------------------- anomalie
 
@@ -1076,7 +1180,7 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
         stato, tipo = p.get("stato", "aperta"), p.get("tipo", "")
         stato = stato if stato in ("aperta", "risolta", "ignorata") else "aperta"
         tipo = tipo if tipo in TIPI_ANOMALIA else ""
-        pagina = max(1, int(p.get("pagina") or 1))
+        pagina = numero_pagina(p.get("pagina"))
         shopify_tipi = compiti.TIPI_SHOPIFY
         with db() as c:
             u = utente(request, c)
@@ -1115,8 +1219,8 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
             out.append(("Chiudi la differenza", link + "#differenze"))
         elif link and t == "aggiornamento_fallito":
             out.append(("Apri il movimento", link) if "/shopify/" in link else ("Apri il trasferimento", link + "#operazioni"))
-        elif link and t in compiti.TIPI_SHOPIFY:
-            out.append(("Sistema", link))
+        elif link and (t in compiti.TIPI_SHOPIFY or t == "shopify_a_mano"):
+            out.append(("Apri il movimento" if t == "shopify_a_mano" else "Sistema", link))
         if t == "ean_doppio" and dedup.count(":") >= 2:
             out.append(("Vedi le varianti", "/inventario?" + urllib.parse.urlencode({"q": dedup.split(":", 2)[2]})))
         if a["chiave"]:
@@ -1278,6 +1382,8 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
             torna = "/articolo?" + urllib.parse.urlencode({"chiave": chiave})
             if not modulo_valido(request, c, form):
                 return vai(torna, "Già salvato", "info")
+            if negozio not in {n.id for n in S.topo.negozi} or not c.execute("SELECT 1 FROM articoli WHERE chiave=?", (chiave,)).fetchone():
+                return vai(torna, "Negozio o articolo non valido: ricarica la pagina", "errore")
             prima = c.execute("SELECT minima, obiettivo FROM soglie WHERE negozio=? AND chiave=?", (negozio, chiave)).fetchone()
             with transazione(c):
                 if form.get("togli"):
@@ -1307,6 +1413,8 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
         with db() as c:
             u = utente(request, c, "responsabile")
             store, vid = form.get("store"), form.get("variant_id")
+            if "|" in (form.get("store_variante") or ""):   # la tendina: vince su i campi nascosti (aggiornati solo da JS)
+                store, vid = form.get("store_variante").split("|", 1)
             torna = "/articolo?" + urllib.parse.urlencode({"chiave": form.get("chiave", "")})
             if not modulo_valido(request, c, form):
                 return vai(torna, "Già fatto", "info")
@@ -1357,10 +1465,10 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
                         rettifiche.rifiuta(c, u["username"], rid, form.get("nota", ""))
                         return vai(torna, "Rettifica rifiutata")
                     rettifiche.conferma(c, S.topo, S.sorgente, cfg.rettifiche_attive, u["username"], rid)
-                    operazioni.avvia_in_sottofondo(cfg.db_path, S.sorgente)
+                    avvia_scritture()
                     return vai(torna, "Rettifica confermata: scrittura in corso")
                 rettifiche.richiedi(c, S.topo, S.sorgente, cfg.rettifiche_attive, u["username"], form.get("negozio"), chiave,
-                                    form.get("fonte"), form.get("contati") or 0, form.get("motivo"))
+                                    form.get("fonte"), form.get("contati"), form.get("motivo"))
                 return vai(torna + "#rettifiche", "Anteprima pronta: controlla e conferma")
             except (T.ErroreFlusso, ValueError) as e:
                 a = c.execute("SELECT * FROM articoli WHERE chiave=?", (chiave,)).fetchone()
@@ -1372,7 +1480,7 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
     @app.get("/storico", response_class=HTMLResponse)
     def storico(request: Request):
         p = request.query_params
-        pagina = max(1, int(p.get("pagina") or 1))
+        pagina = numero_pagina(p.get("pagina"))
         with db() as c:
             u = utente(request, c, "responsabile")
             totale = c.execute("SELECT COUNT(*) FROM registro").fetchone()[0]
@@ -1389,15 +1497,15 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
         form = await request.form()
         with db() as c:
             u = utente(request, c, "responsabile")
-            torna = form.get("torna") or "/storico"
+            torna = percorso_locale(form.get("torna"), "/storico")
             if not modulo_valido(request, c, form):
                 return vai(torna, "Già fatto", "info")
             try:
                 operazioni.decidi(c, u["username"], oid, decisione, form.get("nota", ""))
             except ValueError as e:
                 return vai(torna, str(e), "errore")
-        if decisione in ("riprova", "non_applicata") and S.sorgente:
-            operazioni.avvia_in_sottofondo(cfg.db_path, S.sorgente)
+        if decisione in ("riprova", "non_applicata") and not avvia_scritture():
+            return vai(torna, "Decisione registrata: con le scritture su Shopify spente l'aggiornamento resta in coda", "info")
         return vai(torna, "Decisione registrata")
 
     # ------------------------------------------------------------------------------------------- impostazioni
@@ -1430,7 +1538,10 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
                 if sezione == "soglie":
                     with transazione(c):
                         for n in S.topo.negozi:
-                            mi, ob = int(form.get(f"minima_{n.id}")), int(form.get(f"obiettivo_{n.id}"))
+                            try:
+                                mi, ob = int(form.get(f"minima_{n.id}")), int(form.get(f"obiettivo_{n.id}"))
+                            except (TypeError, ValueError):
+                                raise ValueError(f"{n.nome}: minima e obiettivo devono essere numeri interi") from None
                             if mi < 0 or ob < mi:
                                 raise ValueError(f"{n.nome}: minima >= 0 e obiettivo >= minima")
                             prima = c.execute("SELECT minima, obiettivo FROM soglie WHERE negozio=? AND chiave='*'", (n.id,)).fetchone()
@@ -1453,6 +1564,8 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
                     return vai("/impostazioni#shopify", "Data salvata: i trasferimenti si rileggono con la prossima lettura")
                 if sezione == "utente":
                     auth.crea_utente(c, form.get("username", ""), form.get("nome", ""), form.get("ruolo", ""), form.get("password", ""))
+                    # password nuova: chi era entrato con quella vecchia deve rientrare (chi la cambia resta dentro)
+                    auth.chiudi_sessioni(c, form.get("username", ""), tranne=request.cookies.get("sessione"))
                     registra(c, u["username"], "utente salvato", form.get("username"), None, {"ruolo": form.get("ruolo")})
                     return vai("/impostazioni#utenti", "Utente salvato")
                 if sezione == "disattiva":
@@ -1465,10 +1578,14 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
                 if sezione == "permessi" and not cfg.demo and S.sorgente:
                     esito = S.sorgente.verifica_permessi()
                     salva_impostazione(c, "verifica_permessi", {"il": ora(), "esito": esito})
-                    return vai("/impostazioni#integrazione", "Permessi verificati")
+                    return vai("/impostazioni#collegamento", "Permessi verificati")
                 if sezione == "demo" and cfg.demo:
+                    try:
+                        incerte = max(0, int(form.get("demo_incerte") or 0))
+                    except ValueError:
+                        raise ValueError("Il numero di esiti incerti deve essere un numero intero") from None
                     salva_impostazione(c, "demo_errore_sync", bool(form.get("demo_errore_sync")))
-                    salva_impostazione(c, "demo_incerte", max(0, int(form.get("demo_incerte") or 0)))
+                    salva_impostazione(c, "demo_incerte", incerte)
                     salva_impostazione(c, "demo_vendita", bool(form.get("demo_vendita")))
                     return vai("/impostazioni#demo", "Simulazioni aggiornate")
                 if sezione == "ripristina" and cfg.demo:
@@ -1498,3 +1615,8 @@ def crea_app(cfg: Config, sfondo: bool = True) -> FastAPI:
 
 def _pv(r):
     return (r.get("prodotto") or "") + (f" – {r['variante']}" if r.get("variante") else "")
+
+
+def _firme(t):
+    """Le righe per le firme in fondo al documento: stesse nel PDF e nella pagina di stampa."""
+    return ("Approvato da",) if t["stato"] == "bozza" else ("Preparato da", "Spedito il", "Ricevuto da")

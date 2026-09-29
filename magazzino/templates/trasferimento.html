@@ -36,7 +36,7 @@
       <input type="hidden" name="nota" value="{{ anteprima.nota }}">
     {% endif %}
     <button class="grande">Conferma e aggiorna Shopify</button>
-    <a class="pulsante secondario" href="/trasferimenti/{{ t.id }}#righe">Torna indietro</a>
+    <button class="secondario" name="indietro" value="1" formnovalidate>Torna indietro</button>
   </form>
   {% endmacro %}
   <section class="conferma scheda" id="conferma" aria-labelledby="t-conferma">
@@ -50,7 +50,7 @@
         ({% for s in anteprima.stores %}{{ nomi_store[s] }}{% if not loop.last %} e {% endif %}{% endfor %}).
         {% if anteprima.danneggiati %}{{ plurale(anteprima.danneggiati, 'pezzo rotto non si carica', 'pezzi rotti non si caricano') }}.{% endif %}
       {% endif %}</p>
-    {% if anteprima.mancanti %}<p class="avviso attenzione">{{ plurale(anteprima.mancanti, 'movimento', 'movimenti') }} non si può scrivere: l'articolo non esiste su quel negozio Shopify. Andrà sistemato a mano.</p>{% endif %}
+    {% if anteprima.mancanti %}<p class="avviso attenzione">{{ plurale(anteprima.mancanti, 'movimento non si può scrivere', 'movimenti non si possono scrivere') }}: l'articolo non esiste su quel negozio Shopify. Andrà sistemato a mano.</p>{% endif %}
     {{ modulo_conferma(spedisci) }}
     <div class="tabella-scorre"><table class="dati">
       <thead><tr><th></th><th>Prodotto</th>{% for s in anteprima.stores %}<th class="num">{{ nomi_store[s] }}</th>{% endfor %}</tr></thead>
@@ -68,7 +68,7 @@
 <section id="righe">
 {% if t.stato == 'bozza' %}
   {% if responsabile %}
-  <form method="post" action="/trasferimenti/{{ t.id }}/approva" id="approvazione" data-conferma="Approvare? I pezzi verranno prenotati (Shopify non cambia finché la merce non parte).">
+  <form method="post" action="/trasferimenti/{{ t.id }}/approva" id="approvazione">
     {{ m.gettone_campo() }}<input type="hidden" name="versione" value="{{ t.versione }}">
     <div class="tabella-scorre"><table class="dati a-schede">
       <thead><tr><th></th><th>Prodotto</th><th class="num">Proposti</th><th class="num">Libero a {{ O }}</th><th class="num">Ha già {{ D }}</th><th>Perché</th><th class="num">Da approvare</th></tr></thead>
@@ -84,7 +84,7 @@
     <div class="barra-azioni">
       <span class="nota">Con 0 la riga resta fuori. Il limite è quello libero all'origine.</span><span class="spingi"></span>
       <button class="secondario" formaction="/trasferimenti/{{ t.id }}/modifica">Salva senza approvare</button>
-      <button data-totale-approva>Approva ({{ plurale(righe|sum(attribute='proposta'), 'pezzo', 'pezzi') }})</button>
+      <button data-totale-approva data-conferma="Approvare? I pezzi verranno prenotati (Shopify non cambia finché la merce non parte).">Approva ({{ plurale(righe|sum(attribute='proposta'), 'pezzo', 'pezzi') }})</button>
     </div>
   </form>
   {% else %}
@@ -120,7 +120,7 @@
     <div class="esito-lettura{{ ' errore' if esito_errore }}" role="{{ 'alert' if esito_errore else 'status' }}" aria-live="polite" {% if not (dove == 'scanner' and msg) %}hidden{% endif %}>
       {{ ic.icona('alert' if esito_errore else 'check') }}<span data-esito-testo>{{ msg if dove == 'scanner' else '' }}</span>
       <button type="button" class="fantasma piccolo" data-annulla-ultima hidden>Annulla l'ultima</button></div>
-    <div class="avanzamento"><span data-avanz-testo>Presi {{ prelievo.prelevati_totale }} di {{ prelievo.approvati_totale }} pezzi</span>
+    <div class="avanzamento"><span data-avanz-testo>Presi {{ prelievo.prelevati_totale }} di {{ plurale(prelievo.approvati_totale, 'pezzo', 'pezzi') }}</span>
       <progress max="{{ prelievo.approvati_totale }}" value="{{ prelievo.prelevati_totale }}" data-avanz-barra>{{ prelievo.prelevati_totale }} di {{ prelievo.approvati_totale }}</progress>
       <label class="spunta in-riga" data-solo-js hidden><input type="checkbox" data-suono checked> Suono</label></div>
   </form>
@@ -140,13 +140,13 @@
     {% set mancano = prelievo.approvati_totale - prelievo.prelevati_totale %}
     <div class="barra-azioni">
       <label class="cresce" data-motivo {% if prelievo.tutto %}hidden{% endif %}>Perché mancano pezzi? (serve solo se ne mancano)
-        <input name="motivo" placeholder="es. non trovati a scaffale"></label>
+        <input name="motivo" placeholder="es. non trovati a scaffale" value="{{ scritti.motivo if scritti and scritti.motivo is defined else '' }}"></label>
       <span class="spingi"></span>
       <button class="secondario" formaction="/trasferimenti/{{ t.id }}/preleva" data-salva-numeri>Salva i numeri</button>
       <button formaction="/trasferimenti/{{ t.id }}/spedisci" data-spedisci class="{{ '' if prelievo.tutto else 'secondario' }}"
         {% if not scritture %}disabled title="modifiche su Shopify spente"{% elif not prelievo.prelevati_totale %}disabled title="nessun pezzo preso"{% endif %}
-        data-testo-tutto="Controlla e spedisci" data-testo-parziale="Spedisci comunque: mancano {n}">
-        {{ 'Controlla e spedisci' if prelievo.tutto else 'Spedisci comunque: mancano ' ~ mancano }}</button>
+        data-testo-tutto="Controlla e spedisci" data-testo-parziale="Spedisci comunque: mancano {n}" data-testo-parziale-uno="Spedisci comunque: ne manca 1">
+        {{ 'Controlla e spedisci' if prelievo.tutto else ('Spedisci comunque: ne manca 1' if mancano == 1 else 'Spedisci comunque: mancano ' ~ mancano) }}</button>
     </div>
     {% if not scritture %}<p class="avviso info">Le modifiche alle giacenze su Shopify sono spente: puoi preparare e stampare, ma la spedizione dal programma è bloccata.
       {% if responsabile %}Si accendono nel file .env (vedi docs/TECNICO.md).{% else %}Per spedire, avvisa il responsabile.{% endif %}</p>{% endif %}
@@ -159,6 +159,7 @@
     <button type="button" class="secondario" data-conta-aggiungi>+1</button>
     <div class="esito-lettura" role="status" aria-live="polite" hidden>{{ ic.icona('check') }}<span data-esito-testo></span></div>
   </div>
+  {% set sb = scritti.b if scritti and scritti.b is defined else {} %}{% set sd = scritti.d if scritti and scritti.d is defined else {} %}
   <form method="post" action="/trasferimenti/{{ t.id }}/ricevi" id="ricezione">
     {{ m.gettone_campo() }}
     <div class="riga-azioni">
@@ -173,14 +174,16 @@
           <td>{{ m.nome(r) }}{{ m.codici(r) }}</td>
           <td class="num" data-label="Spediti">{{ r.spedita }}</td>
           <td class="num" data-label="Già arrivati">{{ r.ricevuta }}{% if r.danneggiata %} <small>+ {{ plurale(r.danneggiata, 'rotto', 'rotti') }}</small>{% endif %}</td>
-          <td class="num" data-label="Arrivati ora">{% if r.mancanti %}{{ m.passo_qta("b_" ~ r.id, r.mancanti, r.mancanti, etichetta="Arrivati ora (buoni)") }}{% else %}<span class="zero">—</span>{% endif %}</td>
-          <td class="num" data-label="Rotti">{% if r.mancanti %}{{ m.passo_qta("d_" ~ r.id, 0, r.mancanti, etichetta="Rotti") }}{% else %}<span class="zero">—</span>{% endif %}</td></tr>
+          <td class="num" data-label="Arrivati ora">{% if r.mancanti %}{{ m.passo_qta("b_" ~ r.id, sb.get(r.id, r.mancanti), r.mancanti, etichetta="Arrivati ora (buoni)") }}{% else %}<span class="zero">—</span>{% endif %}</td>
+          <td class="num" data-label="Rotti">{% if r.mancanti %}{{ m.passo_qta("d_" ~ r.id, sd.get(r.id, 0), r.mancanti, etichetta="Rotti") }}{% else %}<span class="zero">—</span>{% endif %}</td></tr>
       {% endfor %}</tbody>
     </table></div>
     <div class="barra-azioni">
-      <label class="cresce">Nota <input name="nota" placeholder="es. primo collo"></label><span class="spingi"></span>
-      <button {% if not scritture %}disabled{% endif %}>Controlla e registra</button>
+      <label class="cresce">Nota <input name="nota" placeholder="es. primo collo" value="{{ scritti.nota if scritti and scritti.nota is defined else '' }}"></label><span class="spingi"></span>
+      <button {% if not scritture %}disabled title="modifiche su Shopify spente"{% endif %}>Controlla e registra</button>
     </div>
+    {% if not scritture %}<p class="avviso info">Le modifiche alle giacenze su Shopify sono spente: l'arrivo dal programma non si può registrare.
+      {% if responsabile %}Si accendono nel file .env (vedi docs/TECNICO.md).{% else %}Avvisa il responsabile.{% endif %}</p>{% endif %}
   </form>
   <details class="scheda">
     <summary>Non arriverà altro? Chiudi la ricezione</summary>
@@ -212,9 +215,9 @@
     {% if responsabile %}
     <form method="post" action="/trasferimenti/{{ t.id }}/differenza" class="in-linea">
       {{ m.gettone_campo() }}<input type="hidden" name="riga" value="{{ r.id }}">
-      <select name="esito" required><option value="">Come si chiude…</option>
+      <select name="esito" required aria-label="Come si chiude la differenza"><option value="">Come si chiude…</option>
         {% for k, v in ESITI.items() %}{% if r.mancanti or k in ('danneggiata_scartata', 'persa') %}<option value="{{ k }}">{{ v }}</option>{% endif %}{% endfor %}</select>
-      <input name="nota" placeholder="cosa hai verificato" required>
+      <input name="nota" placeholder="cosa hai verificato" required aria-label="Cosa hai verificato">
       <button class="secondario">Chiudi la differenza</button>
     </form>
     {% else %}<p class="nota">La chiude il responsabile.</p>{% endif %}
@@ -236,7 +239,7 @@
 {% endif %}
 
 {% if ops and not anteprima %}
-<section class="scheda" id="operazioni" {% if op_in_corso %}data-ricarica="3"{% endif %}>
+<section class="scheda" id="operazioni" {% if op_in_corso and scritture and pagina_get %}data-ricarica="3"{% endif %}>
   {% macro tabella_op() %}
   <div class="tabella-scorre"><table class="semplice">
     <thead><tr><th>Movimento</th><th>Negozio Shopify</th><th>Prodotto</th><th class="num">Pezzi</th><th>Esito</th></tr></thead>
@@ -247,7 +250,7 @@
           {% if responsabile and o.stato in ('conflitto', 'errore', 'incerta', 'da_verificare') %}
           <form method="post" action="/operazioni/{{ o.id }}/{{ 'riprova' if o.stato in ('conflitto', 'errore') else 'applicata' }}" class="decisione">
             {{ m.gettone_campo() }}<input type="hidden" name="torna" value="/trasferimenti/{{ t.id }}#operazioni">
-            <input name="nota" placeholder="cosa hai verificato (obbligatorio)" required>
+            <input name="nota" placeholder="cosa hai verificato (obbligatorio)" required aria-label="Cosa hai verificato">
             {% if o.stato in ('conflitto', 'errore') %}<button class="secondario piccolo">Riprova</button>
               <button class="secondario piccolo" formaction="/operazioni/{{ o.id }}/annulla">Non serve più</button>
             {% else %}<button class="secondario piccolo">C'è su Shopify</button>
@@ -260,6 +263,10 @@
     <h2>Aggiornamenti Shopify: {{ plurale(op_bloccate|length, 'da controllare', 'da controllare') }}</h2>
     {% if responsabile %}<p class="nota">«In attesa di conferma»: il programma riprova da solo e Shopify non può applicarla due volte. Dopo 23 ore controlla lo storico della giacenza su Shopify e scegli.</p>
     {% else %}<p class="nota">Shopify non ha confermato alcuni aggiornamenti: li controlla il responsabile. Tu puoi andare avanti.</p>{% endif %}
+    {{ tabella_op() }}
+  {% elif op_in_corso and not scritture %}
+    <h2>Aggiornamenti di Shopify in coda: {{ op_fatte }} di {{ ops|length }} fatti</h2>
+    <p class="nota">Le modifiche alle giacenze su Shopify sono spente: questi aggiornamenti restano in coda e partono quando si riaccendono.</p>
     {{ tabella_op() }}
   {% elif op_in_corso %}
     <h2><span class="in-corso">Aggiornamento di Shopify in corso: {{ op_fatte }} di {{ ops|length }}</span></h2>

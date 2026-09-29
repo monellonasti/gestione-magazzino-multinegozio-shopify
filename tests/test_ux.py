@@ -2,7 +2,7 @@
 Il restyling: pagine per ruolo, lettore senza ricaricare, anteprima che fissa le quantità, ricerca, anomalie in blocco.
 Le regole di sicurezza restano quelle del server: qui si prova che le pagine nuove non le aggirano.
 """
-import json, re
+import re
 
 import pytest
 from fastapi.testclient import TestClient

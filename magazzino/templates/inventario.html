@@ -17,7 +17,7 @@
     </select></label>
   <label>Mostra
     <select name="filtro">
-      {% for v, t in [("", "Tutti"), ("disponibili", "Disponibili"), ("esauriti", "Esauriti"), ("sotto_scorta", "Sotto la scorta minima"), ("in_trasferimento", "In viaggio o prenotati"), ("solo_uno", "Solo in un negozio")] + ([("anomalie", "Con anomalie")] if responsabile else []) %}
+      {% for v, t in [("", "Tutti"), ("disponibili", "Disponibili"), ("esauriti", "Esauriti"), ("sotto_scorta", "Sotto la minima, l'altro ne ha"), ("in_trasferimento", "In viaggio o prenotati"), ("solo_uno", "Solo in un negozio")] + ([("anomalie", "Con anomalie")] if responsabile else []) %}
       <option value="{{ v }}" {{ 'selected' if filtri.filtro == v }}>{{ t }}</option>{% endfor %}
     </select></label>
   <button>Cerca</button>
@@ -44,7 +44,7 @@
       <td class="num grande in-riga" data-et="{{ B.nome }}">{{ m.qta(r.disp_b) }}{% if r.ubi_b %}<small class="scaffale-qui">{{ r.ubi_b }}</small>{% endif %}</td>
       <td class="num in-riga{{ ' vuota' if not r.prenotati and not r.in_viaggio }}" data-et="In viaggio">
         {%- if r.in_viaggio %}<span title="spediti, non ancora ricevuti">{{ r.in_viaggio }} in viaggio</span>{% endif %}
-        {%- if r.prenotati %}<small title="approvati, non ancora spediti">{{ r.prenotati }} prenotati</small>{% endif %}
+        {%- if r.prenotati %}<small title="approvati, non ancora spediti">{{ plurale(r.prenotati, 'prenotato', 'prenotati') }}</small>{% endif %}
         {%- if not r.prenotati and not r.in_viaggio %}<span class="zero">—</span>{% endif %}</td>
       {% if responsabile %}<td>{% if r.stato not in ('abbinato', 'EAN mancante') %}{{ m.associazione(r.stato) }}{% endif %}</td>{% endif %}
     </tr>

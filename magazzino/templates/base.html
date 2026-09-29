@@ -8,6 +8,7 @@
 <script src="/static/app.js" defer></script>
 </head>
 <body class="{% if demo %}con-demo{% endif %}{% if u %} ruolo-{{ u.ruolo }}{% endif %} {% block classe %}{% endblock %}">
+{% if u %}<a class="salta" href="#contenuto">Vai al contenuto</a>{% endif %}
 {% if demo %}<div class="fascia-demo"><strong>DEMO</strong> dati inventati, nessun collegamento ai negozi veri{% if responsabile %} · <a href="/impostazioni#demo">ripristina o simula guasti</a>{% endif %}</div>{% endif %}
 {% if u %}
 <div class="struttura">
@@ -25,8 +26,9 @@
       <form method="post" action="/esci"><button class="link">Esci</button></form>
     </div>
   </nav>
-  <main>
-    <header class="barra-sync {{ 'problemi' if sync.problemi }}" {% if sync.in_corso %}data-sync-in-corso{% endif %}>
+  <main id="contenuto" tabindex="-1">
+    {#- a lettura finita la pagina si ricarica: solo se è una pagina normale, non il risultato di un modulo inviato #}
+    <header class="barra-sync {{ 'problemi' if sync.problemi }}" {% if sync.in_corso and pagina_get %}data-sync-in-corso{% endif %}>
       <form class="cerca-rapida" method="get" action="/cerca" role="search">
         <label><span class="solo-lettori">Cerca o spara un codice</span>
           <input name="q" placeholder="Cerca o spara un codice…" autocomplete="off" data-lettore-globale enterkeyhint="search"></label>
@@ -37,7 +39,7 @@
         {% if responsabile and sync.problemi %}<a class="piccolo" href="/impostazioni#collegamento">dettagli</a>{% endif %}
       </div>
       <form method="post" action="/sincronizza" class="in-linea">
-        {{ m.gettone_campo() }}<input type="hidden" name="torna" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+        {{ m.gettone_campo() }}<input type="hidden" name="torna" value="{{ qui }}">
         <span class="stato-sync" id="stato-sync" role="status">{% if sync.in_corso %}Lettura in corso: {{ sync.messaggio }}{% endif %}</span>
         <button class="secondario piccolo" {% if sync.in_corso %}disabled{% endif %}>Rileggi i negozi</button>
       </form>

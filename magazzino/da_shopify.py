@@ -72,7 +72,7 @@ def registra_letti(c, topo: Topologia, store: str, lista: list) -> int:
                     c.execute("UPDATE trasferimenti_shopify SET stato_shopify=?, letto_il=? WHERE store=? AND transfer_id=?",
                               (t["stato"], ora(), store, t["transfer_id"]))
                     if pezzi > vecchio["pezzi"]:
-                        apri_anomalia(c, f"shopify_cambiato:{store}:{t['transfer_id']}", _tipo_anomalia(verso), 3,
+                        apri_anomalia(c, f"shopify_cambiato:{store}:{t['transfer_id']}", "shopify_a_mano", 3,
                                       None, f"{t['nome']} su {topo.nomi_store[store]} è cambiato dopo la decisione",
                                       f"Su Shopify ora risultano {pezzi} pezzi {'spediti' if verso == 'uscita' else 'ricevuti'}, "
                                       f"al momento della decisione erano {vecchio['pezzi']}. La differenza va sistemata a mano.")
@@ -98,19 +98,34 @@ def _dedup(verso, store, transfer_id):
     return f"{'shopify_senza_dest' if verso == 'uscita' else 'shopify_carico'}:{store}:{transfer_id}"
 
 
-def _tipo_anomalia(verso):
-    return "trasferimento_senza_destinazione" if verso == "uscita" else "carico_fornitore"
-
-
 def carica_ts(c, store: str, numero: str):
     r = c.execute("SELECT * FROM trasferimenti_shopify WHERE store=? AND (transfer_id=? OR transfer_id LIKE ?)",
                   (store, numero, f"%/{numero}")).fetchone()
     if not r:
         raise T.ErroreFlusso("Trasferimento Shopify non trovato: aggiorna i dati e riprova")
     ts = dict(r)
+    ts["righe_lette"] = ts["righe"]                       # il testo salvato: serve a riconoscere una rilettura nel frattempo
     ts["righe"] = json.loads(ts["righe"])
     ts["numero"] = ts["transfer_id"].rsplit("/", 1)[-1]
     return ts
+
+
+def _prendi_in_decisione(c, ts, cosa):
+    """
+    Dentro la transazione: il movimento passa a «in decisione» solo se è ancora da destinare E ha ancora le righe che
+    chi decide ha visto. Una lettura da Shopify arrivata un attimo prima (altri pezzi spediti o accettati) cambierebbe
+    i numeri sotto la decisione, e il controllo «cambiato dopo la decisione» non se ne accorgerebbe più.
+    """
+    n = c.execute("UPDATE trasferimenti_shopify SET esito='in_decisione' WHERE store=? AND transfer_id=? "
+                  "AND esito='da_destinare' AND righe=?", (ts["store"], ts["transfer_id"], ts["righe_lette"])).rowcount
+    if n == 1:
+        return
+    ora_ = c.execute("SELECT esito, pezzi FROM trasferimenti_shopify WHERE store=? AND transfer_id=?",
+                     (ts["store"], ts["transfer_id"])).fetchone()
+    if ora_ and ora_["esito"] == "da_destinare":
+        raise T.ErroreFlusso(f"Su Shopify {ts['nome']} è cambiato mentre decidevi (ora {ora_['pezzi']} pezzi): "
+                             f"ricarica la pagina e ricontrolla prima di confermare.")
+    raise T.ErroreFlusso(f"Qualcun altro ha appena deciso questo {cosa}: ricarica la pagina.")
 
 
 def elenco(c, esiti=("da_destinare",)) -> list:
@@ -216,10 +231,7 @@ def decidi(c, topo: Topologia, scritture_attive: bool, utente: str, ruolo: str, 
     non_abbinate = [r for r in righe if not r["chiave"]]
     ids, tid = [], None
     with transazione(c):
-        n = c.execute("UPDATE trasferimenti_shopify SET esito='in_decisione' WHERE store=? AND transfer_id=? AND esito='da_destinare'",
-                      (store, ts["transfer_id"])).rowcount
-        if n != 1:
-            raise T.ErroreFlusso("Qualcun altro ha appena deciso questo trasferimento: ricarica la pagina.")
+        _prendi_in_decisione(c, ts, "trasferimento")
         documento = f"logistics://magazzino/shopify/{store}/{ts['numero']}"
         if scelta in ("uscita", "gestito_fuori"):
             esito = scelta
@@ -244,7 +256,7 @@ def decidi(c, topo: Topologia, scritture_attive: bool, utente: str, ruolo: str, 
                 c.execute("UPDATE trasferimenti SET stato='ricevuto', ricevuto_da=?, ricevuto_il=?, versione=versione+1 WHERE id=?",
                           (utente, ora(), tid))
         for r in non_abbinate:
-            apri_anomalia(c, f"shopify_riga:{store}:{r['line_id']}", "trasferimento_senza_destinazione", 2, None,
+            apri_anomalia(c, f"shopify_riga:{store}:{r['line_id']}", "shopify_a_mano", 2, None,
                           f"Riga non abbinata in {ts['nome']}: {r['titolo']}",
                           f"EAN {r['ean'] or '-'}, SKU {r['sku'] or '-'}, {r['quantita']} pezzi: la variante non è fra gli articoli "
                           f"del programma (non tracciata o senza abbinamento). Aggiorna le giacenze a mano.")
@@ -344,9 +356,10 @@ def quote_altro(righe: list, modo: str, frazione: str = "1/2", dispari: str = "a
     for i, v in (modifiche or {}).items():
         if not 0 <= i < len(out) or not righe[i]["chiave"]:
             continue
-        if v < 0 or (modo == "dividi" and v > q[i]):
-            raise T.ErroreFlusso(f"{righe[i]['titolo']}: all'altro negozio vanno da 0 a {q[i]} pezzi" if modo == "dividi"
-                                 else f"{righe[i]['titolo']}: i pezzi non possono essere negativi")
+        # anche con «stesse quantità» all'altro negozio non va più di quanto è arrivato: altrimenti si caricherebbe
+        # su Shopify merce che nessuno ha consegnato, senza passare dal responsabile
+        if v < 0 or (modo in ("dividi", "uguale") and v > q[i]):
+            raise T.ErroreFlusso(f"{righe[i]['titolo']}: all'altro negozio vanno da 0 a {q[i]} pezzi")
         out[i] = v
     return out
 
@@ -407,10 +420,7 @@ def decidi_carico(c, topo: Topologia, scritture_attive: bool, utente: str, ruolo
     documento = f"logistics://magazzino/shopify/{store}/{ts['numero']}"
     ids, tid = [], None
     with transazione(c):
-        n = c.execute("UPDATE trasferimenti_shopify SET esito='in_decisione' WHERE store=? AND transfer_id=? AND esito='da_destinare'",
-                      (store, ts["transfer_id"])).rowcount
-        if n != 1:
-            raise T.ErroreFlusso("Qualcun altro ha appena deciso questo carico: ricarica la pagina.")
+        _prendi_in_decisione(c, ts, "carico")
         # 1. duplicazione 1:1 sugli altri canali del negozio di arrivo, e stessa merce all'altro negozio
         for m in movs:
             if m["tipo"] == "fornitore":
@@ -429,7 +439,7 @@ def decidi_carico(c, topo: Topologia, scritture_attive: bool, utente: str, ruolo
                                         altro, f"ric{ev}")
         for r in righe:
             if not r["chiave"]:
-                apri_anomalia(c, f"shopify_riga:{store}:{r['line_id']}", "carico_fornitore", 2, None,
+                apri_anomalia(c, f"shopify_riga:{store}:{r['line_id']}", "shopify_a_mano", 2, None,
                               f"Riga non abbinata in {ts['nome']}: {r['titolo']}",
                               f"EAN {r['ean'] or '-'}, SKU {r['sku'] or '-'}, {r['quantita']} pezzi: la variante non è fra gli "
                               f"articoli del programma. Duplicazione e ripartizione vanno fatte a mano.")

@@ -109,9 +109,13 @@ Risultati dell'ultima esecuzione: [TEST.md](TEST.md). Schermate: [schermate/](sc
 
 ## Sicurezza
 
-- Password salvate con scrypt; sessione in un cookie httponly che scade dopo 12 ore; 5 tentativi sbagliati bloccano l'utente per 10 minuti.
+- Password salvate con scrypt; sessione in un cookie httponly che scade dopo 12 ore. 5 tentativi sbagliati bloccano quell'utente per 10 minuti sul dispositivo da cui arrivano, 20 da tutti i dispositivi insieme lo bloccano ovunque: chi sbaglia apposta da un tablet non chiude fuori il responsabile dal suo PC. Un nome che non esiste costa lo stesso calcolo di uno vero, così il tempo di risposta non dice quali utenti ci sono.
+- Cambiare la password di un utente (da Impostazioni o con `magazzino.py utente`) chiude le sue sessioni già aperte.
 - Ogni modulo porta un gettone firmato con la sessione e usabile una volta sola: blocca le richieste da altri siti e i doppi clic.
 - Permessi controllati sul server. Il magazziniere non riceve mai vendite, prezzi o dati degli ordini, nemmeno nascosti nella pagina o negli export.
+- Con `SCRITTURE_SHOPIFY=0` nessun aggiornamento parte, da nessun pulsante: le operazioni già in coda restano in coda finché le scritture non si riaccendono.
+- Le pagine non restano nella cache del browser (`Cache-Control: no-store`): su un tablet condiviso, dopo «Esci», il tasto Indietro non mostra le pagine di chi c'era prima.
+- Gli avvisi dopo un'azione viaggiano nell'indirizzo firmati: un link scritto da altri non può far comparire un falso avviso del programma.
 - Del venduto il programma salva solo quantità, data e sede di ogni riga d'ordine: niente clienti né importi.
 - Le credenziali non compaiono in pagine, log o export.
 - Il programma è fatto per la rete del negozio. Per usarlo da fuori serve un accesso protetto (VPN, o un proxy con HTTPS); non va esposto su internet così com'è.

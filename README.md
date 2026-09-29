@@ -114,7 +114,7 @@ Il 25 settembre 2026 l'app ha letto i negozi veri in sola lettura, senza modific
 
 Ognuna arriva con il suo «Cosa fare». Alcune di solito non vanno corrette, come un articolo che esiste davvero in un solo negozio, e si chiudono in blocco con un motivo.
 
-Regole e flussi sono coperti da prove automatiche: 83 su calcoli e flussi, più 59 controlli sulle schermate, tablet e telefono compresi. Il dettaglio è in [docs/TEST.md](docs/TEST.md).
+Regole e flussi sono coperti da prove automatiche: 125 su calcoli, flussi, sicurezza e pagine, più 59 controlli sulle schermate, tablet e telefono compresi. Il dettaglio è in [docs/TEST.md](docs/TEST.md).
 
 ## A che punto è
 

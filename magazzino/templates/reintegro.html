@@ -27,8 +27,8 @@
       <span><strong>Fino alla scorta obiettivo</strong><small>gli articoli sotto la minima tornano all'obiettivo</small></span></label>
   </fieldset>
   <fieldset class="periodo" data-campo-periodo><legend>Periodo delle vendite</legend>
-    <label>Dal <input type="date" name="dal" value="{{ par.dal.isoformat() }}"></label>
-    <label>Al <input type="date" name="al" value="{{ par.al.isoformat() }}"></label>
+    <label>Dal <input type="date" name="dal" value="{{ par.dal.isoformat() }}" min="{{ primo_giorno }}" max="{{ oggi }}"></label>
+    <label>Al <input type="date" name="al" value="{{ par.al.isoformat() }}" max="{{ oggi }}"></label>
     <span class="scorciatoie">Ultimi
       {% for n, dal, al in scorciatoie %}<a href="/reintegro?{{ dict(query, modo='venduto', dal=dal, al=al, calcola=1)|q }}" data-giorni="{{ n }}"
         class="{{ 'attivo' if par.modo == 'venduto' and query.dal == dal and query.al == al }}">{{ n }}</a>{% if not loop.last %} · {% endif %}{% endfor %} giorni</span>
@@ -45,7 +45,7 @@
     <div class="titolo-riga">
       <h2>Da {{ O }} a {{ D }} <small>{{ plurale(da_fare|length, 'riga', 'righe') }} · {{ plurale(da_fare|sum(attribute='quantita'), 'pezzo', 'pezzi') }}</small></h2>
       <span class="spingi"></span>
-      {{ m.scarica("/reintegro/export", query|q, formati=("xlsx", "csv"), stampa="/reintegro/export.pdf?" ~ (query|q), etichetta_stampa="Stampa proposta") }}
+      {{ m.scarica("/reintegro/export", query|q) }}
     </div>
     <div class="tabella-scorre">
     <table class="dati">
@@ -76,7 +76,8 @@
     </div>
   </form>
   {% else %}
-  <div class="vuoto">Niente da mandare a {{ D }} con questi criteri{% if par.modo == 'venduto' %}: nessuna vendita da rimettere nel periodo, oppure è già stata rimessa con un trasferimento precedente{% endif %}.</div>
+  <div class="vuoto">{% if non_coperti %}Niente da mandare a {{ D }}: quello che servirebbe a {{ O }} non c'è.{% if responsabile %} Il dettaglio è qui sotto.{% endif %}
+    {%- else %}Niente da mandare a {{ D }} con questi criteri{% if par.modo == 'venduto' %}: nessuna vendita da rimettere nel periodo, oppure è già stata rimessa con un trasferimento precedente{% endif %}.{% endif %}</div>
   {% endif %}
   {% if non_coperti and responsabile %}
   <details class="scheda"><summary>{{ plurale(non_coperti|length, 'articolo', 'articoli') }} da rimettere ma senza pezzi disponibili a {{ O }}</summary>

@@ -511,7 +511,7 @@ table.semplice + p, table.semplice + .nota, .tabella-scorre + p.nota { margin-to
 .avviso.attenzione { --av-bg: var(--c-att-tinta); --av-bd: var(--c-att-bordo); --av-ic: var(--c-att-pieno); --av-icona: var(--i-attenzione); }  /* nuovo */
 .avviso a { color: inherit; font-weight: 600; }
 .avviso ul { margin: var(--s-2) 0 0; padding-left: 1.1rem; }
-.avviso code { background: rgb(255 255 255 / .5); }
+.avviso code { background: color-mix(in srgb, var(--c-rialzata) 70%, transparent); }
 main > .avviso[role] { animation: lampo 1s ease-out 1; }
 p.avviso { margin: var(--s-3) 0 0; }
 
@@ -806,15 +806,15 @@ main:has(input:focus:not([data-scanner]):not([type="hidden"])) .scanner::after {
 }
 #scanner { scroll-margin-top: calc(var(--alto-fisso) + 12px); }
 /* messaggio della lettura: grande, in basso, sempre visibile (il salto a #scanner non lo nasconde) */
-main:has(#scanner) > .avviso[role] {
+main:has(#scanner:not([hidden])) > .avviso[role="status"] {
   position: fixed; z-index: var(--z-toast); left: calc(50% + var(--lm) / 2); bottom: calc(var(--basso-fisso) + 96px);
   width: min(560px, calc(100vw - var(--lm) - 32px)); margin: 0; translate: -50% 0;
   padding: var(--s-4) var(--s-5) var(--s-4) 56px; border-width: 2px; box-shadow: var(--ombra-3);
   font-size: var(--fs-l); font-weight: 600;
   animation: toast-entra .22s ease-out both, lampo 1s .22s ease-out 1;
 }
-main:has(#scanner) > .avviso[role]::before { left: 18px; top: 50%; translate: 0 -50%; width: 26px; height: 26px; }
-main:has(#scanner) > .avviso[role="status"] { animation: toast-entra .22s ease-out both, lampo 1s .22s ease-out 1, toast-esce .3s ease-in 6s forwards; }
+main:has(#scanner:not([hidden])) > .avviso[role="status"]::before { left: 18px; top: 50%; translate: 0 -50%; width: 26px; height: 26px; }
+main:has(#scanner:not([hidden])) > .avviso[role="status"] { animation: toast-entra .22s ease-out both, lampo 1s .22s ease-out 1, toast-esce .3s ease-in 6s forwards; }
 
 .spedizione textarea { max-width: 640px; }
 .spedizione > button { margin-top: var(--s-3); }
@@ -1177,8 +1177,6 @@ details.tendina > .elenco a { display: flex; align-items: center; gap: var(--s-2
   .filtri > label:not(.cerca) { flex: 1 1 40%; }
   .filtri > label:not(.cerca) select { width: 100%; }
   .filtri > button, .filtri > .pulsante { flex: 1 1 auto; }
-  .scanner { grid-template-columns: minmax(0, 1fr); }
-  .scanner button { width: 100%; }
   .titolo-articolo { align-items: flex-start; }
   .titolo-articolo .foto { --foto: 64px; }
   .riga-azioni > .pulsante.piccolo { flex: 0 0 auto; }
@@ -1186,7 +1184,7 @@ details.tendina > .elenco a { display: flex; align-items: center; gap: var(--s-2
   .anomalie .testa strong { flex-basis: 100%; order: 3; }
   .anomalie .azioni form input[name="nota"] { width: 100%; }
   .anomalie .azioni form.in-linea { display: flex; width: 100%; }
-  main:has(#scanner) > .avviso[role] { bottom: calc(var(--basso-fisso) + 76px); }
+  main:has(#scanner:not([hidden])) > .avviso[role="status"] { bottom: calc(var(--basso-fisso) + 76px); }
 }
 
 
@@ -1202,6 +1200,11 @@ body.stampa {
 @media screen {
   html:has(> body.stampa) { background: #E9E3DC; }
   body.stampa { max-width: 210mm; min-height: 297mm; margin: 24px auto; padding: 14mm 12mm; box-shadow: 0 10px 40px rgb(0 0 0 / .18); }
+  .stampa .scorre-stampa { overflow-x: auto; }          /* sul telefono la tabella scorre dentro il foglio, non la pagina */
+}
+@media screen and (max-width: 600px) {
+  body.stampa { min-height: 0; margin: 0; padding: 16px 12px; box-shadow: none; }
+  .stampa .solo-schermo { flex-wrap: wrap; }
 }
 body.stampa h1 { font-size: 18px; margin: 0 0 10px; letter-spacing: 0; }
 .stampa .fascia-demo { position: static; margin: 0 0 12px; border-radius: 4px; }
@@ -1250,6 +1253,7 @@ button:focus-visible, .pulsante:focus-visible, .menu a:focus-visible, .schede-fi
 .paginazione a:focus-visible, a.riquadro:focus-visible, summary:focus-visible { outline: 3px solid var(--c-focus); outline-offset: 2px; }
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--c-focus); outline-offset: 1px; }
 .menu a:focus-visible { outline-offset: -3px; }
+.menu a.attivo:focus-visible { outline-offset: 2px; }
 
 @keyframes gira { to { transform: rotate(360deg); } }
 @keyframes lampo {
@@ -1290,6 +1294,9 @@ td.scaffale { font-family: var(--font-mono); font-size: var(--fs-m); font-weight
 /* approvazione: riga oltre il libero all'origine */
 table.dati tbody tr.oltre > td { background: var(--c-err-tinta); }
 table.dati tbody tr.oltre > td:first-child { box-shadow: inset 4px 0 0 var(--c-err-pieno); }
+table.dati tbody tr.oltre > td[data-label="Da approvare"]::after {
+  content: "oltre il libero"; display: block; margin-top: 2px; font-size: var(--fs-xs); font-weight: 600; color: var(--c-err);
+}
 table.dati tbody tr.errore-riga > td { background: var(--c-err-tinta); }
 
 /* anteprima prima di scrivere: riepilogo in una frase, pulsanti in cima */
@@ -1402,6 +1409,15 @@ form#blocco label.in-riga input { width: 18rem; max-width: 60vw; }
 small.blocco { display: block; margin-top: 2px; color: var(--c-tenue); }
 details.tecnico { margin-top: 2px; font-size: var(--fs-xs); }
 details.tecnico > summary { color: var(--c-tenue); font-weight: 500; min-height: 0; }
+@media (pointer: coarse) {
+  details.tecnico > summary, .barra-sync .negozi-sync > a.piccolo { display: inline-flex; align-items: center; min-height: 44px; }
+  .elenco-trasf td.primo > a { display: inline-flex; align-items: center; min-height: 44px; min-width: 64px; }
+}
+/* «Vai al contenuto»: il primo tasto Tab salta il menu */
+.salta { position: absolute; left: -9999px; top: 8px; z-index: 100; padding: var(--s-2) var(--s-4); border-radius: var(--r-s);
+  background: var(--c-sel); color: var(--c-su-sel); font-weight: 600; }
+.salta:focus { left: 8px; }
+main:focus { outline: none; }
 
 /* stato dei negozi: testo corto quando la barra è stretta (il dettaglio resta nel title) */
 .barra-sync .testo-corto { display: none; }

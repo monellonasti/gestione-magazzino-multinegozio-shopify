@@ -124,3 +124,19 @@ def test_ripartisci_altre_frazioni_e_limiti():
         regole.ripartisci([2], 1, 2, "a caso")
     with pytest.raises(ValueError):
         regole.ripartisci([2], 3, 2, "a")
+
+
+def test_sotto_scorta_conta_solo_quello_che_l_altro_negozio_puo_coprire(vuoto):
+    """«Sotto la minima che l'altro negozio potrebbe coprire»: un articolo a zero nell'altro negozio non si sposta."""
+    from conftest import metti_varianti
+    from magazzino import calcoli
+    from magazzino.negozi import DEMO
+    from magazzino.sync import sincronizza
+    c, s, _ = vuoto
+    c.execute("UPDATE soglie SET minima=3, obiettivo=4 WHERE chiave='*'")
+    metti_varianti(c, [("demo-centro", 1, "8000000000017", 1), ("demo-web", 1, "8000000000017", 1), ("demo-porto", 1, "8000000000017", 0),
+                       ("demo-centro", 2, "8000000000024", 1), ("demo-web", 2, "8000000000024", 1), ("demo-porto", 2, "8000000000024", 6)])
+    sincronizza(c, s, DEMO)
+    # al Centro sono sotto la minima tutti e due; il Porto può coprire solo il secondo. Al Porto il primo è a 0 ma il
+    # Centro ne ha 1: si può spostare
+    assert calcoli.sotto_scorta(c, DEMO) == {"centro": 1, "porto": 1}
